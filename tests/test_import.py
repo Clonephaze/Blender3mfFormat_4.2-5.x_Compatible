@@ -156,6 +156,36 @@ class RoundtripTests(Blender3mfTestCase):
                 msg=f"Dimension {i} not preserved"
             )
 
+    def test_roundtrip_preserves_dimensions_scale_units(self):
+        """Verify dimensions preserved through export/import, non-default unit
+        / scale."""
+        # Create cube with specific size
+        bpy.context.scene.unit_settings.length_unit = "MILLIMETERS"
+        bpy.context.scene.unit_settings.scale_length = 0.001
+        bpy.ops.mesh.primitive_cube_add(location=(0, 0, 0), size=2.0)
+        cube = bpy.context.object
+        original_dimensions = tuple(cube.dimensions)
+
+        bpy.ops.export_mesh.threemf(filepath=str(self.temp_file))
+
+        # Clear and reimport
+        bpy.ops.object.select_all(action='SELECT')
+        bpy.ops.object.delete()
+
+        result = bpy.ops.import_mesh.threemf(filepath=str(self.temp_file))
+
+        self.assertIn('FINISHED', result)
+
+        # Check dimensions (with tolerance for floating point)
+        imported = bpy.data.objects[0]
+        for i in range(3):
+            self.assertAlmostEqual(
+                imported.dimensions[i],
+                original_dimensions[i],
+                places=2,
+                msg=f"Dimension {i} not preserved"
+            )
+
 
 class APICompatibilityTests(Blender3mfTestCase):
     """Verify Blender 4.2+ API compatibility."""

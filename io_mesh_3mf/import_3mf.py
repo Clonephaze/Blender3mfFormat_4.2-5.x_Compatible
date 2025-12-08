@@ -423,16 +423,16 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         """
         scale = self.global_scale
 
-        if context.scene.unit_settings.scale_length != 0:
-            scale /= (
-                context.scene.unit_settings.scale_length
-            )  # Apply the global scale of the units in Blender.
+        blender_unit_to_metre = context.scene.unit_settings.scale_length
+        if blender_unit_to_metre == 0:  # Fallback for special cases.
+            blender_unit = context.scene.unit_settings.length_unit
+            blender_unit_to_metre = blender_to_metre[blender_unit]
 
-        threemf_unit = root.attrib.get("unit", MODEL_DEFAULT_UNIT)
-        blender_unit = context.scene.unit_settings.length_unit
-        scale *= threemf_to_metre[threemf_unit]  # Convert 3MF units to metre.
-        scale /= blender_to_metre[blender_unit]  # Convert metre to Blender's units.
+        threemf_unit = MODEL_DEFAULT_UNIT
+        threemf_unit_to_metre = threemf_to_metre[threemf_unit]
 
+        # Scale from 3MF units to Blender scene units
+        scale *= threemf_unit_to_metre / blender_unit_to_metre
         return scale
 
     def read_metadata(self, node: xml.etree.ElementTree.Element,
