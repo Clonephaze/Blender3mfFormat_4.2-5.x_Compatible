@@ -607,6 +607,14 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                     datatype="xs:string",
                     value=object_node.attrib["partnumber"],
                 )
+            if "name" in object_node.attrib and "Title" not in metadata:
+                metadata["Title"] = MetadataEntry(
+                        name="Title",
+                        preserve=True,
+                        datatype="xs:string",
+                        value=object_node.attrib.get("name")
+                )
+
             metadata["3mf:object_type"] = MetadataEntry(
                 name="3mf:object_type",
                 preserve=True,
@@ -904,6 +912,8 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         bpy.context.view_layer.objects.active = blender_object
         blender_object.select_set(True)
         metadata.store(blender_object)
+        # Higher precedence for per-resource metadata
+        resource_object.metadata.store(blender_object)
         if "3mf:object_type" in resource_object.metadata and resource_object.metadata[
             "3mf:object_type"
         ].value in {"solidsupport", "support"}:
