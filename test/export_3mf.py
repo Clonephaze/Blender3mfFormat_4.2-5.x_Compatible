@@ -472,6 +472,127 @@ class TestExport3MF(unittest.TestCase):
             "There may not be any items in the build, since the only object in the scene was a light and that should "
             "get ignored.")
 
+    def test_write_objects_skips_hidden(self):
+        """
+        Tests that hidden objects are skipped when export_hidden is False.
+        """
+        root = xml.etree.ElementTree.Element(f"{{{MODEL_NAMESPACE}}}model")
+        resources_element = xml.etree.ElementTree.SubElement(
+            root, f"{{{MODEL_NAMESPACE}}}resources"
+        )
+        self.exporter.write_object_resource = unittest.mock.MagicMock(
+            return_value=(1, mathutils.Matrix.Identity(4))
+        )
+        self.exporter.safe_report = unittest.mock.MagicMock()
+        self.exporter.export_hidden = False
+
+        # Create a hidden object
+        hidden_object = unittest.mock.MagicMock()
+        hidden_object.parent = None
+        hidden_object.type = 'MESH'
+        hidden_object.hide_get.return_value = True  # Hidden
+
+        self.exporter.write_objects(
+            root, resources_element, [hidden_object], global_scale=1.0
+        )
+
+        # Hidden object should be skipped
+        self.exporter.write_object_resource.assert_not_called()
+        item_elements = list(root.iterfind("3mf:build/3mf:item", MODEL_NAMESPACES))
+        self.assertEqual(len(item_elements), 0)
+
+    def test_write_objects_hidden_notification(self):
+        """
+        Tests that user is notified when hidden objects are skipped.
+        """
+        root = xml.etree.ElementTree.Element(f"{{{MODEL_NAMESPACE}}}model")
+        resources_element = xml.etree.ElementTree.SubElement(
+            root, f"{{{MODEL_NAMESPACE}}}resources"
+        )
+        self.exporter.write_object_resource = unittest.mock.MagicMock(
+            return_value=(1, mathutils.Matrix.Identity(4))
+        )
+        self.exporter.safe_report = unittest.mock.MagicMock()
+        self.exporter.export_hidden = False
+
+        # Create two hidden objects
+        hidden1 = unittest.mock.MagicMock()
+        hidden1.parent = None
+        hidden1.type = 'MESH'
+        hidden1.hide_get.return_value = True
+
+        hidden2 = unittest.mock.MagicMock()
+        hidden2.parent = None
+        hidden2.type = 'MESH'
+        hidden2.hide_get.return_value = True
+
+        self.exporter.write_objects(
+            root, resources_element, [hidden1, hidden2], global_scale=1.0
+        )
+
+        # User should be notified about skipped objects
+        self.exporter.safe_report.assert_called_once()
+        call_args = self.exporter.safe_report.call_args
+        self.assertEqual(call_args[0][0], {'INFO'})
+        self.assertIn("2", call_args[0][1])  # Should mention count
+        self.assertIn("hidden", call_args[0][1].lower())
+
+    def test_write_objects_exports_hidden_when_enabled(self):
+        """
+        Tests that hidden objects are exported when export_hidden is True.
+        """
+        root = xml.etree.ElementTree.Element(f"{{{MODEL_NAMESPACE}}}model")
+        resources_element = xml.etree.ElementTree.SubElement(
+            root, f"{{{MODEL_NAMESPACE}}}resources"
+        )
+        self.exporter.write_object_resource = unittest.mock.MagicMock(
+            return_value=(1, mathutils.Matrix.Identity(4))
+        )
+        self.exporter.safe_report = unittest.mock.MagicMock()
+        self.exporter.export_hidden = True  # Enable hidden export
+
+        # Create a hidden object
+        hidden_object = unittest.mock.MagicMock()
+        hidden_object.parent = None
+        hidden_object.type = 'MESH'
+        hidden_object.hide_get.return_value = True  # Hidden
+
+        self.exporter.write_objects(
+            root, resources_element, [hidden_object], global_scale=1.0
+        )
+
+        # Hidden object should be exported
+        self.exporter.write_object_resource.assert_called_once()
+        # No notification when exporting hidden objects
+        self.exporter.safe_report.assert_not_called()
+
+    def test_write_objects_no_notification_when_none_hidden(self):
+        """
+        Tests no notification is sent when no objects are hidden.
+        """
+        root = xml.etree.ElementTree.Element(f"{{{MODEL_NAMESPACE}}}model")
+        resources_element = xml.etree.ElementTree.SubElement(
+            root, f"{{{MODEL_NAMESPACE}}}resources"
+        )
+        self.exporter.write_object_resource = unittest.mock.MagicMock(
+            return_value=(1, mathutils.Matrix.Identity(4))
+        )
+        self.exporter.safe_report = unittest.mock.MagicMock()
+        self.exporter.export_hidden = False
+
+        # Create a visible object
+        visible_object = unittest.mock.MagicMock()
+        visible_object.parent = None
+        visible_object.type = 'MESH'
+        visible_object.hide_get.return_value = False  # Not hidden
+
+        self.exporter.write_objects(
+            root, resources_element, [visible_object], global_scale=1.0
+        )
+
+        # No notification when all objects are visible
+        self.exporter.safe_report.assert_not_called()
+
     def test_write_objects_multiple(self):
         """
         Tests writing two objects.

@@ -34,3 +34,4 @@ from .import_3mf import TestImport3MF
 from .export_3mf import TestExport3MF
 from .metadata import TestMetadata
 from .annotations import TestAnnotations
+from .preferences import TestPreferences, TestPreferenceDefaults

@@ -46,31 +46,34 @@ class ThreeMFPreferences(bpy.types.AddonPreferences):
     """
     bl_idname = __package__
 
-    # Export defaults
+    # Precision settings
     default_coordinate_precision: bpy.props.IntProperty(
-        name="Default Coordinate Precision",
-        description=("Default number of decimal digits for coordinates in exported files. "
-                     "Higher values preserve more detail but increase file size"),
+        name="Coordinate Precision",
+        description=("Number of decimal digits for vertex coordinates. "
+                     "9 = lossless 32-bit float precision (recommended for 3D printing). "
+                     "Lower values reduce file size but may cause manifold issues"),
         default=9,
         min=0,
         max=12,
     )
 
+    # Export behavior settings
     default_export_hidden: bpy.props.BoolProperty(
-        name="Export Hidden Objects by Default",
-        description="Whether to export objects hidden in the viewport by default",
+        name="Include Hidden Objects",
+        description="Include viewport-hidden objects in exports. When off, hidden objects are skipped",
         default=False,
     )
 
     default_apply_modifiers: bpy.props.BoolProperty(
-        name="Apply Modifiers by Default",
-        description="Whether to apply modifiers before exporting by default",
+        name="Apply Modifiers",
+        description="Bake modifiers into mesh before export. Disable to export base mesh only",
         default=True,
     )
 
+    # Scale settings
     default_global_scale: bpy.props.FloatProperty(
-        name="Default Global Scale",
-        description="Default scale factor for import/export operations",
+        name="Global Scale",
+        description="Scale factor applied during import and export. Use 0.001 to convert mm to m",
         default=1.0,
         soft_min=0.001,
         soft_max=1000.0,
@@ -81,12 +84,24 @@ class ThreeMFPreferences(bpy.types.AddonPreferences):
     def draw(self, context):
         layout = self.layout
 
-        box = layout.box()
-        box.label(text="Export Defaults:", icon='EXPORT')
-        box.prop(self, "default_coordinate_precision")
-        box.prop(self, "default_export_hidden")
-        box.prop(self, "default_apply_modifiers")
-        box.prop(self, "default_global_scale")
+        # Precision section
+        precision_box = layout.box()
+        precision_box.label(text="Precision", icon='PREFERENCES')
+        row = precision_box.row()
+        row.prop(self, "default_coordinate_precision")
+        precision_box.label(text="Tip: 9 decimals preserves full 32-bit float precision", icon='INFO')
+
+        # Export behavior section
+        export_box = layout.box()
+        export_box.label(text="Export Behavior", icon='EXPORT')
+        col = export_box.column(align=True)
+        col.prop(self, "default_export_hidden", icon='HIDE_OFF')
+        col.prop(self, "default_apply_modifiers", icon='MODIFIER')
+
+        # Scale section
+        scale_box = layout.box()
+        scale_box.label(text="Scale (Import & Export)", icon='ORIENTATION_GLOBAL')
+        scale_box.prop(self, "default_global_scale")
 
 
 def menu_import(self, _) -> None:

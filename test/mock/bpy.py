@@ -23,11 +23,13 @@ class MockOperator:
 
 
 class MockImportHelper:
-    pass
+    def invoke(self, context, event):
+        return {'RUNNING_MODAL'}
 
 
 class MockExportHelper:
-    pass
+    def invoke(self, context, event):
+        return {'RUNNING_MODAL'}
 
 
 class MockPrincipledBSDFWrapper:

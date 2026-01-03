@@ -1,4 +1,41 @@
-1.1.0 - Modernization for Blender 4.2+
+1.1.1 - 1.1.2 — Unit Handling, Precision & Preferences
+====
+This release refines the modernized addon with improved unit handling, higher-fidelity coordinate export, better object naming, and configurable defaults via addon preferences.
+
+Features
+----
+* **Unit & Scale Handling:**
+  - Fix export scaling for combinations of scene scale and units (e.g. scale_length = 0.001 with millimeter units), so 3MF files now match Blender dimensions across common unit setups.
+  - Improve import scaling by correctly interpreting the 3MF model `unit` attribute and converting to Blender scene units.
+* **Object Naming & Visibility:**
+  - Export the Blender object name into the 3MF model, improving round‑trip fidelity and interoperability with slicers.
+  - Import object names from 3MF back into Blender objects when available.
+  - Add an `Export hidden objects` option to the export operator so viewport‑hidden objects can be explicitly included or excluded.
+  - **User notification** when hidden objects are skipped during export, with a count and hint to enable the option.
+* **Coordinate Precision & Formatting:**
+  - Increase default coordinate precision to 9 decimal places to preserve full 32‑bit float resolution and reduce the risk of non‑manifold issues from rounding.
+  - Standardize transformation matrix formatting to 9 decimal places for consistent, high‑precision output.
+
+Addon Preferences
+----
+* Add `ThreeMFPreferences` (Edit → Preferences → Add-ons → 3MF) to configure default behavior:
+  - **Default Coordinate Precision** for exports.
+  - **Export Hidden Objects by Default** toggle.
+  - **Apply Modifiers by Default** toggle.
+  - **Default Global Scale** shared by import and export operators.
+* Enhanced preferences UI with grouped settings, icons, and helpful tooltips.
+* Export/import operators read these preferences on `invoke`, so dialogs open with user‑chosen defaults while still allowing per‑export overrides.
+
+Testing & Maintenance
+----
+* Extend unit tests to cover:
+  - New unit/scene scale behavior for export and import.
+  - Hidden‑object export behavior and notification.
+  - High‑precision transformation formatting.
+  - Preferences loading in `invoke()` methods.
+* Update tests and documentation to reflect the new defaults and options.
+
+1.1.0 — Modernization for Blender 4.2+
 ====
 **IMPORTANT: This version requires Blender 4.2 or newer. For Blender 2.8-4.1, use version 1.0.2.**
 

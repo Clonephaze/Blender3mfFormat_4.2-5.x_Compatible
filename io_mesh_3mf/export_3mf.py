@@ -322,9 +322,11 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         build_element = xml.etree.ElementTree.SubElement(
             root, f"{{{MODEL_NAMESPACE}}}build"
         )
+        hidden_skipped = 0
         for blender_object in blender_objects:
             if blender_object.hide_get() and not self.export_hidden:
                 # Do not export hidden objects
+                hidden_skipped += 1
                 continue
             if blender_object.parent is not None:
                 continue  # Only write objects that have no parent, since we'll get the child objects recursively.
@@ -358,6 +360,14 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                     item_element, f"{{{MODEL_NAMESPACE}}}metadatagroup"
                 )
                 self.write_metadata(metadatagroup_element, metadata)
+
+        # Notify user if hidden objects were skipped
+        if hidden_skipped > 0:
+            self.safe_report(
+                {'INFO'},
+                f"Skipped {hidden_skipped} hidden object(s). "
+                "Enable 'Include Hidden' to export them."
+            )
 
     def write_object_resource(self, resources_element: xml.etree.ElementTree.Element,
                               blender_object: bpy.types.Object) -> Tuple[int, mathutils.Matrix]:
