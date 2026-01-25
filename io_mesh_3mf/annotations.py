@@ -269,6 +269,7 @@ class Annotations:
         # Add the content types for files that this add-on creates by itself.
         most_common[".rels"] = RELS_MIMETYPE
         most_common[".model"] = MODEL_MIMETYPE
+        most_common[".config"] = "application/xml"  # For Orca Slicer metadata files
 
         # Write an XML file that contains the extension rules for the most common cases,
         # but specific overrides for the outliers.
