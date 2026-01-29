@@ -81,6 +81,14 @@ class ThreeMFPreferences(bpy.types.AddonPreferences):
         max=1e6,
     )
 
+    # Import behavior settings
+    default_import_materials: bpy.props.BoolProperty(
+        name="Import Materials",
+        description="Import material colors from 3MF files by default (includes standard basematerials and vendor color zones). "
+                    "Disable to import geometry only",
+        default=True,
+    )
+
     def draw(self, context):
         layout = self.layout
 
@@ -91,6 +99,11 @@ class ThreeMFPreferences(bpy.types.AddonPreferences):
         row.prop(self, "default_coordinate_precision")
         precision_box.label(text="Tip: 9 decimals preserves full 32-bit float precision", icon='INFO')
 
+        # Scale section
+        scale_box = layout.box()
+        scale_box.label(text="Scale (Import & Export)", icon='ORIENTATION_GLOBAL')
+        scale_box.prop(self, "default_global_scale")
+
         # Export behavior section
         export_box = layout.box()
         export_box.label(text="Export Behavior", icon='EXPORT')
@@ -98,10 +111,10 @@ class ThreeMFPreferences(bpy.types.AddonPreferences):
         col.prop(self, "default_export_hidden", icon='HIDE_OFF')
         col.prop(self, "default_apply_modifiers", icon='MODIFIER')
 
-        # Scale section
-        scale_box = layout.box()
-        scale_box.label(text="Scale (Import & Export)", icon='ORIENTATION_GLOBAL')
-        scale_box.prop(self, "default_global_scale")
+        # Import behavior section
+        import_box = layout.box()
+        import_box.label(text="Import Behavior", icon='IMPORT')
+        import_box.prop(self, "default_import_materials", icon='MATERIAL')
 
 
 def menu_import(self, _) -> None:

@@ -69,12 +69,16 @@ After installation, the following menu entries are available:
 
 ### Import Options
 - **Scale**: Uniform scale applied from the scene origin
+- **Import Materials**: Import material colors from the file (disable for geometry-only import)
+- **Import Vendor Extensions**: Import vendor-specific data like Orca Slicer color zones (disable for standard-only import)
 
 ### Export Options
 - **Selection Only**
 - **Scale**
 - **Apply Modifiers**
 - **Coordinate Precision**
+- **Export Hidden Objects**
+- **Orca Slicer Color Zones**: Export face colors as Orca Slicer filament zones (vendor-specific)
 
 ---
 
@@ -88,7 +92,7 @@ See [`tests/README.md`](tests/README.md) for detailed testing information.
 
 ## 3MF Specification Support
 
-This add-on targets the **3MF Core Specification v1.2.3**.
+This add-on targets the **3MF Core Specification v1.3.0**.
 
 ### Behavior Notes
 
@@ -101,11 +105,42 @@ This add-on targets the **3MF Core Specification v1.2.3**.
 
 ### Extensions
 
-> **NOTE**  
-> Support for 3MF extensions is intentionally incremental.
+This add-on supports several 3MF extensions for enhanced interoperability with slicers and manufacturing software.
 
-- No optional 3MF extensions are fully implemented yet.
-- The codebase is structured to support future extension work (materials, properties, metadata, slicer-specific data).
+#### Supported Extensions
+
+| Extension | Namespace | Support Level |
+|-----------|-----------|---------------|
+| **Core Materials** (`basematerials`) | Core Spec v1.3.0 | ✅ Full |
+| **Production Extension** | `http://schemas.microsoft.com/3dmanufacturing/production/2015/06` | ✅ Full |
+| **Materials Extension** | `http://schemas.microsoft.com/3dmanufacturing/material/2015/02` | 🔶 Partial |
+
+#### Orca Slicer / BambuStudio Compatibility
+
+This add-on includes special support for **Orca Slicer** and **BambuStudio** multi-color workflows:
+
+**Import:**
+- Reads multi-file Production Extension structure (`3D/Objects/*.model`)
+- Imports `paint_color` attributes as Blender materials
+- Reads actual filament colors from `Metadata/project_settings.config`
+- Supports files exported from Orca Slicer, BambuStudio, and PrusaSlicer
+
+**Export (Orca Slicer Color Zones option):**
+- Exports using Production Extension multi-file structure
+- Writes per-triangle `paint_color` attributes for filament assignment
+- Generates `project_settings.config` with filament colors
+- Creates proper OPC relationships for slicer compatibility
+
+**Round-trip Workflow:**
+1. Create a mesh in Blender with multiple materials (different colors per face)
+2. Export with "Orca Slicer Color Zones" enabled
+3. Open in Orca Slicer - colors appear as filament zones
+4. Re-import into Blender - materials are preserved
+
+> **NOTE**  
+> The Orca color zone export uses vendor-specific attributes (`paint_color`) that are not part of the official 3MF specification. Standard 3MF consumers will still read the geometry correctly but may not display colors.
+
+See [EXTENSIONS.md](EXTENSIONS.md) for detailed documentation on extension support, vendor-specific features, and adding new extensions.
 
 ---
 

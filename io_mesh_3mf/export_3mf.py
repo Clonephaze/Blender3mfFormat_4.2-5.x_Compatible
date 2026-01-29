@@ -1,11 +1,13 @@
 import base64  # To decode files that must be preserved.
 import collections  # Counter, to find the most common material of an object.
+import datetime  # For Core Properties timestamps.
 import io  # For string buffer to post-process XML
 import itertools
 import json  # For writing Orca project_settings.config
 import logging  # To debug and log progress.
 import os  # For path operations
 import re  # For cleaning namespace prefixes in XML
+import uuid  # For generating UUIDs for Production Extension
 import xml.etree.ElementTree  # To write XML documents with the 3D model data.
 import zipfile  # To write zip archives, the shell of the 3MF file.
 from typing import Optional, Dict, Set, List, Tuple
@@ -22,15 +24,29 @@ from .constants import (
     MODEL_LOCATION,
     MODEL_NAMESPACE,
     MODEL_DEFAULT_UNIT,
+    MODEL_REL,
+    MATERIAL_NAMESPACE,
+    PRODUCTION_NAMESPACE,
+    BAMBU_NAMESPACE,
+    RELS_NAMESPACE,
+    CORE_PROPERTIES_LOCATION,
+    CORE_PROPERTIES_REL,
+    CORE_PROPERTIES_MIMETYPE,
+    CORE_PROPERTIES_NAMESPACE,
+    DC_NAMESPACE,
+    DCTERMS_NAMESPACE,
     conflicting_mustpreserve_contents,
+)
+from .extensions import (
+    ExtensionManager,
+    MATERIALS_EXTENSION,
+    PRODUCTION_EXTENSION,
+    ORCA_EXTENSION,
 )
 from .metadata import (
     Metadata,  # To store metadata from the Blender scene into the 3MF file.
 )
 from .unit_conversions import blender_to_metre, threemf_to_metre
-
-# Materials extension namespace for color groups (used by Orca/BambuStudio)
-MATERIAL_NAMESPACE = "http://schemas.microsoft.com/3dmanufacturing/material/2015/02"
 
 # Orca Slicer paint_color encoding for filament IDs
 # This matches CONST_FILAMENTS in OrcaSlicer's Model.cpp
@@ -176,6 +192,10 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         self.material_resource_id = -1
         self.num_written = 0
         self.vertex_colors = {}  # Maps color hex values to filament indices for Orca export
+        self.orca_object_files = []  # List of (path, uuid) for each object model file
+        
+        # Initialize extension manager
+        self.extension_manager = ExtensionManager()
 
         archive = self.create_archive(self.filepath)
         if archive is None:
@@ -188,33 +208,27 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
 
         global_scale = self.unit_scale(context)
 
-        # Due to an open bug in Python 3.7 (Blender's version) we need to prefix all elements with the namespace.
-        # Bug: https://bugs.python.org/issue17088
-        # Workaround: https://stackoverflow.com/questions/4997848/4999510#4999510
-
-        # Register namespaces if using Orca format
+        # Orca Slicer mode uses Production Extension with separate model files
         if self.use_orca_format:
-            BAMBU_NAMESPACE = "http://schemas.bambulab.com/package/2021"
-            # Register the default namespace with empty prefix so core elements are unprefixed
-            xml.etree.ElementTree.register_namespace("", MODEL_NAMESPACE)
-            xml.etree.ElementTree.register_namespace("BambuStudio", BAMBU_NAMESPACE)
-            xml.etree.ElementTree.register_namespace("m", MATERIAL_NAMESPACE)
-            # Create root - namespaces will be added by ElementTree based on register_namespace
-            # Only explicitly add BambuStudio since it's not part of the default 3MF namespace handling
-            root = xml.etree.ElementTree.Element(
-                f"{{{MODEL_NAMESPACE}}}model"
-            )
-            # Add required Orca metadata to the model
-            xml.etree.ElementTree.SubElement(
-                root, f"{{{MODEL_NAMESPACE}}}metadata",
-                attrib={"name": "Application"}
-            ).text = "Blender-3MF-OrcaExport"
-            xml.etree.ElementTree.SubElement(
-                root, f"{{{MODEL_NAMESPACE}}}metadata",
-                attrib={"name": "BambuStudio:3mfVersion"}
-            ).text = "1"
-        else:
-            root = xml.etree.ElementTree.Element(f"{{{MODEL_NAMESPACE}}}model")
+            return self.execute_orca_export(context, archive, blender_objects, global_scale)
+        
+        # Standard 3MF export (original behavior)
+        return self.execute_standard_export(context, archive, blender_objects, global_scale)
+
+    def execute_standard_export(self, context: bpy.types.Context, archive: zipfile.ZipFile,
+                                 blender_objects, global_scale: float) -> Set[str]:
+        """
+        Standard 3MF export (non-Orca mode).
+        
+        Uses core 3MF spec with optional basematerials.
+        """
+        # Register all active extension namespaces with ElementTree
+        self.extension_manager.register_namespaces(xml.etree.ElementTree)
+        
+        # Create model root element
+        root = xml.etree.ElementTree.Element(
+            f"{{{MODEL_NAMESPACE}}}model"
+        )
 
         scene_metadata = Metadata()
         scene_metadata.retrieve(bpy.context.scene)
@@ -224,52 +238,23 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             root, f"{{{MODEL_NAMESPACE}}}resources"
         )
 
-        # Collect face colors for Orca export if enabled
-        if self.use_orca_format:
-            self.safe_report({'INFO'}, "Collecting face colors for Orca export...")
-            self.vertex_colors = self.collect_face_colors(blender_objects)
-            log.info(f"Orca mode enabled with {len(self.vertex_colors)} color zones")
-            if len(self.vertex_colors) == 0:
-                log.warning("No face colors found! Orca export may fail. "
-                            "Ensure objects have materials assigned to faces.")
-                self.safe_report({'WARNING'},
-                                 "No face colors detected. Assign different materials to faces in Edit mode.")
-            else:
-                self.safe_report({'INFO'}, f"Detected {len(self.vertex_colors)} color zones for Orca export")
-
         self.material_name_to_index = self.write_materials(
             resources_element, blender_objects
         )
-
-        # In Orca mode, update vertex_colors with actual colorgroup IDs from write_materials
-        if self.use_orca_format and self.material_name_to_index:
-            self.vertex_colors = self.material_name_to_index
-            log.info(f"Updated vertex_colors with colorgroup IDs: {self.vertex_colors}")
 
         self.write_objects(root, resources_element, blender_objects, global_scale)
 
         document = xml.etree.ElementTree.ElementTree(root)
         with archive.open(MODEL_LOCATION, "w", force_zip64=True) as f:
-            if self.use_orca_format:
-                # Write to buffer first, then clean namespace prefixes
-                buffer = io.BytesIO()
-                document.write(buffer, xml_declaration=True, encoding="UTF-8")
-                xml_content = buffer.getvalue().decode('UTF-8')
+            document.write(
+                f,
+                xml_declaration=True,
+                encoding="UTF-8",
+                default_namespace=MODEL_NAMESPACE,
+            )
 
-                # Clean up namespace prefixes for Orca compatibility
-                xml_content = self.clean_orca_namespaces(xml_content)
-                f.write(xml_content.encode('UTF-8'))
-            else:
-                document.write(
-                    f,
-                    xml_declaration=True,
-                    encoding="UTF-8",
-                    default_namespace=MODEL_NAMESPACE,
-                )
-
-        # Write Orca metadata files if enabled
-        if self.use_orca_format:
-            self.write_orca_metadata(archive, blender_objects)
+        # Write OPC Core Properties (Dublin Core metadata)
+        self.write_core_properties(archive)
 
         try:
             archive.close()
@@ -281,6 +266,352 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         log.info(f"Exported {self.num_written} objects to 3MF archive {self.filepath}.")
         self.safe_report({'INFO'}, f"Exported {self.num_written} objects to {self.filepath}")
         return {"FINISHED"}
+
+    def execute_orca_export(self, context: bpy.types.Context, archive: zipfile.ZipFile,
+                            blender_objects, global_scale: float) -> Set[str]:
+        """
+        Orca Slicer export using Production Extension structure.
+        
+        Creates separate model files for each object with paint_color attributes,
+        and a main model file with component references.
+        """
+        # Activate Production Extension for Orca compatibility
+        self.extension_manager.activate(PRODUCTION_EXTENSION.namespace)
+        self.extension_manager.activate(ORCA_EXTENSION.namespace)
+        log.info("Activated Orca Slicer extensions: Production + BambuStudio")
+        
+        # Register namespaces
+        xml.etree.ElementTree.register_namespace("", MODEL_NAMESPACE)
+        xml.etree.ElementTree.register_namespace("p", PRODUCTION_NAMESPACE)
+        xml.etree.ElementTree.register_namespace("BambuStudio", BAMBU_NAMESPACE)
+        
+        # Collect face colors for Orca export
+        self.safe_report({'INFO'}, "Collecting face colors for Orca export...")
+        self.vertex_colors = self.collect_face_colors(blender_objects)
+        log.info(f"Orca mode enabled with {len(self.vertex_colors)} color zones")
+        
+        if len(self.vertex_colors) == 0:
+            log.warning("No face colors found! Assign materials to faces for color zones.")
+            self.safe_report({'WARNING'},
+                             "No face colors detected. Assign different materials to faces in Edit mode.")
+        else:
+            self.safe_report({'INFO'}, f"Detected {len(self.vertex_colors)} color zones for Orca export")
+        
+        # Generate build UUID
+        build_uuid = str(uuid.uuid4())
+        
+        # Filter mesh objects and track their data
+        mesh_objects = []
+        object_counter = 1
+        for blender_object in blender_objects:
+            if not self.export_hidden and not blender_object.visible_get():
+                continue
+            if blender_object.parent is not None:
+                continue
+            if blender_object.type != 'MESH':
+                continue
+            mesh_objects.append(blender_object)
+        
+        if not mesh_objects:
+            self.safe_report({'ERROR'}, "No mesh objects found to export!")
+            archive.close()
+            return {"CANCELLED"}
+        
+        # Write individual object model files
+        object_data = []  # List of (wrapper_id, mesh_id, object_path, wrapper_uuid, mesh_uuid, transformation)
+        
+        for idx, blender_object in enumerate(mesh_objects):
+            object_counter = idx + 1
+            wrapper_id = object_counter * 2  # Even IDs for wrappers
+            mesh_id = object_counter * 2 - 1  # Odd IDs for mesh objects (inside sub-files)
+            
+            # Generate UUIDs
+            wrapper_uuid = f"0000000{object_counter}-61cb-4c03-9d28-80fed5dfa1dc"
+            mesh_uuid = f"000{object_counter}0000-81cb-4c03-9d28-80fed5dfa1dc"
+            component_uuid = f"000{object_counter}0000-b206-40ff-9872-83e8017abed1"
+            
+            # Create safe filename
+            safe_name = re.sub(r'[^\w\-.]', '_', blender_object.name)
+            object_path = f"/3D/Objects/{safe_name}_{object_counter}.model"
+            
+            # Get transformation
+            transformation = blender_object.matrix_world.copy()
+            transformation = mathutils.Matrix.Scale(global_scale, 4) @ transformation
+            
+            # Write the individual object model file
+            self.write_orca_object_model(
+                archive, blender_object, object_path, mesh_id, mesh_uuid
+            )
+            
+            object_data.append({
+                'wrapper_id': wrapper_id,
+                'mesh_id': mesh_id,
+                'object_path': object_path,
+                'wrapper_uuid': wrapper_uuid,
+                'mesh_uuid': mesh_uuid,
+                'component_uuid': component_uuid,
+                'transformation': transformation,
+                'name': blender_object.name,
+            })
+            
+            self.num_written += 1
+        
+        # Write main 3dmodel.model with wrapper objects and build items
+        self.write_orca_main_model(archive, object_data, build_uuid)
+        
+        # Write 3D/_rels/3dmodel.model.rels
+        self.write_orca_model_relationships(archive, object_data)
+        
+        # Write Orca metadata files
+        self.write_orca_metadata(archive, mesh_objects)
+        
+        try:
+            archive.close()
+        except EnvironmentError as e:
+            log.error(f"Unable to complete writing to 3MF archive: {e}")
+            self.safe_report({'ERROR'}, f"Unable to complete writing to 3MF archive: {e}")
+            return {"CANCELLED"}
+
+        log.info(f"Exported {self.num_written} objects to Orca-compatible 3MF archive {self.filepath}.")
+        self.safe_report({'INFO'}, f"Exported {self.num_written} objects to {self.filepath}")
+        return {"FINISHED"}
+
+    def write_orca_object_model(self, archive: zipfile.ZipFile, blender_object: bpy.types.Object,
+                                 object_path: str, mesh_id: int, mesh_uuid: str) -> None:
+        """
+        Write an individual object model file for Orca Slicer.
+        
+        Each object gets its own .model file in 3D/Objects/ with the actual geometry
+        and paint_color attributes on triangles.
+        """
+        # Create root element with Production Extension
+        root = xml.etree.ElementTree.Element(
+            "model",
+            attrib={
+                "unit": "millimeter",
+                "xml:lang": "en-US",
+                "xmlns": MODEL_NAMESPACE,
+                "xmlns:BambuStudio": BAMBU_NAMESPACE,
+                "xmlns:p": PRODUCTION_NAMESPACE,
+                "requiredextensions": "p",
+            }
+        )
+        
+        # Add BambuStudio version metadata
+        metadata = xml.etree.ElementTree.SubElement(root, "metadata", attrib={"name": "BambuStudio:3mfVersion"})
+        metadata.text = "1"
+        
+        # Resources
+        resources = xml.etree.ElementTree.SubElement(root, "resources")
+        
+        # Get mesh data
+        if self.use_mesh_modifiers:
+            dependency_graph = bpy.context.evaluated_depsgraph_get()
+            eval_object = blender_object.evaluated_get(dependency_graph)
+        else:
+            eval_object = blender_object
+        
+        try:
+            mesh = eval_object.to_mesh()
+        except RuntimeError:
+            log.warning(f"Could not get mesh for object: {blender_object.name}")
+            return
+        
+        if mesh is None:
+            return
+        
+        mesh.calc_loop_triangles()
+        
+        # Create object element
+        obj_elem = xml.etree.ElementTree.SubElement(
+            resources, "object",
+            attrib={
+                "id": str(mesh_id),
+                "p:UUID": mesh_uuid,
+                "type": "model",
+            }
+        )
+        
+        # Mesh element
+        mesh_elem = xml.etree.ElementTree.SubElement(obj_elem, "mesh")
+        
+        # Vertices
+        vertices_elem = xml.etree.ElementTree.SubElement(mesh_elem, "vertices")
+        for vertex in mesh.vertices:
+            xml.etree.ElementTree.SubElement(
+                vertices_elem, "vertex",
+                attrib={
+                    "x": str(vertex.co.x),
+                    "y": str(vertex.co.y),
+                    "z": str(vertex.co.z),
+                }
+            )
+        
+        # Triangles with paint_color
+        triangles_elem = xml.etree.ElementTree.SubElement(mesh_elem, "triangles")
+        for triangle in mesh.loop_triangles:
+            tri_attribs = {
+                "v1": str(triangle.vertices[0]),
+                "v2": str(triangle.vertices[1]),
+                "v3": str(triangle.vertices[2]),
+            }
+            
+            # Get paint_color from material
+            triangle_color = self.get_triangle_color(mesh, triangle, blender_object)
+            if triangle_color and triangle_color in self.vertex_colors:
+                filament_index = self.vertex_colors[triangle_color]
+                if filament_index < len(ORCA_FILAMENT_CODES):
+                    paint_code = ORCA_FILAMENT_CODES[filament_index]
+                    if paint_code:
+                        tri_attribs["paint_color"] = paint_code
+            
+            xml.etree.ElementTree.SubElement(triangles_elem, "triangle", attrib=tri_attribs)
+        
+        # Empty build (geometry is in this file, build is in main model)
+        xml.etree.ElementTree.SubElement(root, "build")
+        
+        # Clean up mesh
+        eval_object.to_mesh_clear()
+        
+        # Write to archive
+        # Remove leading slash for archive path
+        archive_path = object_path.lstrip('/')
+        
+        document = xml.etree.ElementTree.ElementTree(root)
+        buffer = io.BytesIO()
+        document.write(buffer, xml_declaration=True, encoding="UTF-8")
+        xml_content = buffer.getvalue().decode('UTF-8')
+        
+        with archive.open(archive_path, "w") as f:
+            f.write(xml_content.encode('UTF-8'))
+        
+        log.info(f"Wrote object model: {archive_path}")
+
+    def write_orca_main_model(self, archive: zipfile.ZipFile, object_data: List[dict],
+                               build_uuid: str) -> None:
+        """
+        Write the main 3dmodel.model file with wrapper objects pointing to sub-models.
+        """
+        # Create root element
+        root = xml.etree.ElementTree.Element(
+            "model",
+            attrib={
+                "unit": "millimeter",
+                "xml:lang": "en-US",
+                "xmlns": MODEL_NAMESPACE,
+                "xmlns:BambuStudio": BAMBU_NAMESPACE,
+                "xmlns:p": PRODUCTION_NAMESPACE,
+                "requiredextensions": "p",
+            }
+        )
+        
+        # Metadata
+        meta_app = xml.etree.ElementTree.SubElement(root, "metadata", attrib={"name": "Application"})
+        meta_app.text = "Blender-3MF-OrcaExport"
+        
+        meta_version = xml.etree.ElementTree.SubElement(root, "metadata", attrib={"name": "BambuStudio:3mfVersion"})
+        meta_version.text = "1"
+        
+        # Standard metadata
+        for name in ["Copyright", "Description", "Designer", "DesignerCover", "DesignerUserId", "License", "Origin"]:
+            meta = xml.etree.ElementTree.SubElement(root, "metadata", attrib={"name": name})
+            meta.text = ""
+        
+        # Creation/modification dates
+        today = datetime.datetime.now().strftime("%Y-%m-%d")
+        meta_created = xml.etree.ElementTree.SubElement(root, "metadata", attrib={"name": "CreationDate"})
+        meta_created.text = today
+        meta_modified = xml.etree.ElementTree.SubElement(root, "metadata", attrib={"name": "ModificationDate"})
+        meta_modified.text = today
+        
+        # Title from first object or scene
+        title = object_data[0]['name'] if object_data else "Blender Export"
+        meta_title = xml.etree.ElementTree.SubElement(root, "metadata", attrib={"name": "Title"})
+        meta_title.text = title
+        
+        # Resources - wrapper objects with component references
+        resources = xml.etree.ElementTree.SubElement(root, "resources")
+        
+        for obj in object_data:
+            # Wrapper object
+            wrapper = xml.etree.ElementTree.SubElement(
+                resources, "object",
+                attrib={
+                    "id": str(obj['wrapper_id']),
+                    "p:UUID": obj['wrapper_uuid'],
+                    "type": "model",
+                }
+            )
+            
+            # Components element with path reference
+            components = xml.etree.ElementTree.SubElement(wrapper, "components")
+            xml.etree.ElementTree.SubElement(
+                components, "component",
+                attrib={
+                    "p:path": obj['object_path'],
+                    "objectid": str(obj['mesh_id']),
+                    "p:UUID": obj['component_uuid'],
+                    "transform": "1 0 0 0 1 0 0 0 1 0 0 0",  # Identity transform
+                }
+            )
+        
+        # Build element
+        build = xml.etree.ElementTree.SubElement(root, "build", attrib={"p:UUID": build_uuid})
+        
+        for idx, obj in enumerate(object_data):
+            item_uuid = f"0000000{idx + 2}-b1ec-4553-aec9-835e5b724bb4"
+            transform_str = self.format_transformation(obj['transformation'])
+            
+            xml.etree.ElementTree.SubElement(
+                build, "item",
+                attrib={
+                    "objectid": str(obj['wrapper_id']),
+                    "p:UUID": item_uuid,
+                    "transform": transform_str,
+                    "printable": "1",
+                }
+            )
+        
+        # Write to archive
+        document = xml.etree.ElementTree.ElementTree(root)
+        buffer = io.BytesIO()
+        document.write(buffer, xml_declaration=True, encoding="UTF-8")
+        xml_content = buffer.getvalue().decode('UTF-8')
+        
+        with archive.open(MODEL_LOCATION, "w") as f:
+            f.write(xml_content.encode('UTF-8'))
+        
+        log.info(f"Wrote main model: {MODEL_LOCATION}")
+
+    def write_orca_model_relationships(self, archive: zipfile.ZipFile, object_data: List[dict]) -> None:
+        """
+        Write the 3D/_rels/3dmodel.model.rels file linking to sub-models.
+        """
+        root = xml.etree.ElementTree.Element(
+            "Relationships",
+            attrib={"xmlns": RELS_NAMESPACE}
+        )
+        
+        for idx, obj in enumerate(object_data):
+            xml.etree.ElementTree.SubElement(
+                root, "Relationship",
+                attrib={
+                    "Target": obj['object_path'],
+                    "Id": f"rel-{idx + 1}",
+                    "Type": MODEL_REL,
+                }
+            )
+        
+        # Write to archive
+        document = xml.etree.ElementTree.ElementTree(root)
+        buffer = io.BytesIO()
+        document.write(buffer, xml_declaration=True, encoding="UTF-8")
+        xml_content = buffer.getvalue().decode('UTF-8')
+        
+        with archive.open("3D/_rels/3dmodel.model.rels", "w") as f:
+            f.write(xml_content.encode('UTF-8'))
+        
+        log.info("Wrote 3D/_rels/3dmodel.model.rels")
 
     # The rest of the functions are in order of when they are called.
 
@@ -329,6 +660,48 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             filename = filename[len(".3mf_preserved/"):]
             with archive.open(filename, "w") as f:
                 f.write(contents)
+
+    def write_core_properties(self, archive: zipfile.ZipFile) -> None:
+        """
+        Write OPC Core Properties (Dublin Core metadata) to the archive.
+
+        This adds standard document metadata like creator, creation date, and modification date
+        as defined by the Open Packaging Conventions specification.
+        :param archive: The 3MF archive to write Core Properties into.
+        """
+        # Register namespaces for cleaner output
+        xml.etree.ElementTree.register_namespace("cp", CORE_PROPERTIES_NAMESPACE)
+        xml.etree.ElementTree.register_namespace("dc", DC_NAMESPACE)
+        xml.etree.ElementTree.register_namespace("dcterms", DCTERMS_NAMESPACE)
+
+        # Create root element with proper namespaces
+        root = xml.etree.ElementTree.Element(
+            f"{{{CORE_PROPERTIES_NAMESPACE}}}coreProperties"
+        )
+        root.set(f"xmlns:dc", DC_NAMESPACE)
+        root.set(f"xmlns:dcterms", DCTERMS_NAMESPACE)
+
+        # dc:creator - who created this file
+        creator = xml.etree.ElementTree.SubElement(root, f"{{{DC_NAMESPACE}}}creator")
+        creator.text = "Blender 3MF Format Add-on"
+
+        # dcterms:created - when the file was created (W3CDTF format)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        created = xml.etree.ElementTree.SubElement(root, f"{{{DCTERMS_NAMESPACE}}}created")
+        created.text = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # dcterms:modified - when the file was last modified
+        modified = xml.etree.ElementTree.SubElement(root, f"{{{DCTERMS_NAMESPACE}}}modified")
+        modified.text = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # Write the Core Properties file
+        document = xml.etree.ElementTree.ElementTree(root)
+        try:
+            with archive.open(CORE_PROPERTIES_LOCATION, "w") as f:
+                document.write(f, xml_declaration=True, encoding="UTF-8")
+            log.info("Wrote OPC Core Properties to docProps/core.xml")
+        except Exception as e:
+            log.error(f"Failed to write Core Properties: {e}")
 
     def write_orca_metadata(self, archive: zipfile.ZipFile, blender_objects: List[bpy.types.Object]) -> None:
         """
@@ -555,7 +928,12 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         """
         Write the materials on the specified blender objects to a 3MF document.
 
-        We'll write all materials to one single <basematerials> tag in the resources.
+        Depending on active extensions, this will write either:
+        - Core spec <basematerials> (standard mode): 3MF Core Specification v1.3.0 compliant
+        - Materials extension <m:colorgroup> (Orca mode): Vendor-specific for Orca Slicer/BambuStudio
+
+        We'll write all materials to one single <basematerials> tag in the resources (standard mode).
+        In Orca mode, each color becomes a separate <m:colorgroup> resource.
 
         Aside from writing the materials to the document, this function also returns a mapping from the names of the
         materials in Blender (which must be unique) to the index in the <basematerials> material group. Using that
@@ -565,7 +943,8 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         :param resources_element: A <resources> node from a 3MF document.
         :param blender_objects: A list of Blender objects that may have materials which we need to write to the
         document.
-        :return: A mapping from material name to the index of that material in the <basematerials> tag.
+        :return: A mapping from material name to the index of that material in the <basematerials> tag
+                 (or colorgroup ID in Orca mode).
         """
         name_to_index = {}  # The output list, mapping from material name to indexes in the <basematerials> tag.
         next_index = 0
@@ -573,8 +952,9 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         # Create an element lazily. We don't want to create an element if there are no materials to write.
         basematerials_element = None
 
-        # In Orca mode, write colors as m:colorgroup elements (materials extension)
+        # Orca Slicer mode: Use Materials extension m:colorgroup (vendor-specific)
         # Orca/BambuStudio parses <m:colorgroup> with <m:color>, NOT <basematerials>
+        # This is a vendor-specific interpretation of the Materials extension
         if self.use_orca_format and self.vertex_colors:
             # Sort colors by their index to maintain consistent ordering
             sorted_colors = sorted(self.vertex_colors.items(), key=lambda x: x[1])
@@ -742,8 +1122,12 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             eval_object.to_mesh_clear()
 
         # Sort colors for consistent ordering and create index mapping
+        # IMPORTANT: Start at index 1 because Orca's paint_color codes:
+        #   - "" (empty/no attribute) = no paint, use object base material  
+        #   - "4" = filament 1, "8" = filament 2, etc.
+        # So all colored faces need paint_color attributes starting from index 1
         sorted_colors = sorted(unique_colors)
-        color_to_index = {color: idx for idx, color in enumerate(sorted_colors)}
+        color_to_index = {color: idx + 1 for idx, color in enumerate(sorted_colors)}
 
         log.info(f"Collected {len(unique_colors)} unique colors from {objects_processed} objects for Orca export")
         log.info(f"Colors: {sorted_colors}")

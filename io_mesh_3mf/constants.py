@@ -19,26 +19,51 @@ from typing import Set, Dict
 
 # IDE and Documentation support.
 __all__ = [
+    "SPEC_VERSION",
     "SUPPORTED_EXTENSIONS",
     "conflicting_mustpreserve_contents",
     "MODEL_LOCATION",
     "CONTENT_TYPES_LOCATION",
+    "CORE_PROPERTIES_LOCATION",
     "RELS_FOLDER",
     "MODEL_REL",
     "THUMBNAIL_REL",
+    "CORE_PROPERTIES_REL",
     "RELS_MIMETYPE",
     "MODEL_MIMETYPE",
+    "CORE_PROPERTIES_MIMETYPE",
     "MODEL_NAMESPACE",
     "MODEL_NAMESPACES",
     "MODEL_DEFAULT_UNIT",
+    "MATERIAL_NAMESPACE",
+    "PRODUCTION_NAMESPACE",
+    "BAMBU_NAMESPACE",
     "CONTENT_TYPES_NAMESPACE",
     "CONTENT_TYPES_NAMESPACES",
+    "CORE_PROPERTIES_NAMESPACE",
+    "DC_NAMESPACE",
+    "DCTERMS_NAMESPACE",
     "RELS_NAMESPACE",
     "RELS_NAMESPACES",
     "RELS_RELATIONSHIP_FIND",
 ]
 
-SUPPORTED_EXTENSIONS: Set[str] = set()  # Set of namespaces for 3MF extensions that we support.
+# 3MF Core Specification version this addon targets.
+SPEC_VERSION: str = "1.3.0"
+
+# Set of namespaces for 3MF extensions that we support.
+# Materials extension is used for Orca Slicer color export.
+MATERIAL_NAMESPACE: str = "http://schemas.microsoft.com/3dmanufacturing/material/2015/02"
+# Production extension for multi-file structure (used by Orca/BambuStudio)
+PRODUCTION_NAMESPACE: str = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
+# BambuStudio/Orca vendor namespace
+BAMBU_NAMESPACE: str = "http://schemas.bambulab.com/package/2021"
+
+SUPPORTED_EXTENSIONS: Set[str] = {
+    MATERIAL_NAMESPACE,  # Materials and colors extension
+    PRODUCTION_NAMESPACE,  # Production extension (multi-file)
+}
+
 # File contents to use when files must be preserved but there's a file with different content in a previous archive.
 # Only for flagging. This will not be in the final 3MF archives.
 conflicting_mustpreserve_contents: str = "<Conflicting MustPreserve file!>"
@@ -46,15 +71,18 @@ conflicting_mustpreserve_contents: str = "<Conflicting MustPreserve file!>"
 # Default storage locations.
 MODEL_LOCATION: str = "3D/3dmodel.model"  # Conventional location for the 3D model data.
 CONTENT_TYPES_LOCATION: str = "[Content_Types].xml"  # Location of the content types definition.
+CORE_PROPERTIES_LOCATION: str = "docProps/core.xml"  # OPC Core Properties location.
 RELS_FOLDER: str = "_rels"  # Folder name to store relationships files in.
 
 # Relationship types.
 MODEL_REL: str = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"  # Relationship type of 3D models.
 THUMBNAIL_REL: str = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"
+CORE_PROPERTIES_REL: str = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties"
 
 # MIME types of files in the archive.
 RELS_MIMETYPE: str = "application/vnd.openxmlformats-package.relationships+xml"  # MIME type of .rels files.
 MODEL_MIMETYPE: str = "application/vnd.ms-package.3dmanufacturing-3dmodel+xml"  # MIME type of .model files.
+CORE_PROPERTIES_MIMETYPE: str = "application/vnd.openxmlformats-package.core-properties+xml"
 
 # Constants in the 3D model file.
 MODEL_NAMESPACE: str = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
@@ -68,6 +96,11 @@ CONTENT_TYPES_NAMESPACE: str = "http://schemas.openxmlformats.org/package/2006/c
 CONTENT_TYPES_NAMESPACES: Dict[str, str] = {
     "ct": CONTENT_TYPES_NAMESPACE
 }
+
+# OPC Core Properties namespaces (Dublin Core).
+CORE_PROPERTIES_NAMESPACE: str = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+DC_NAMESPACE: str = "http://purl.org/dc/elements/1.1/"  # Dublin Core elements
+DCTERMS_NAMESPACE: str = "http://purl.org/dc/terms/"  # Dublin Core terms
 
 # Constants in the .rels files.
 RELS_NAMESPACE: str = "http://schemas.openxmlformats.org/package/2006/relationships"

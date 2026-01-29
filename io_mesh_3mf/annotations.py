@@ -31,6 +31,9 @@ from .constants import (
     MODEL_LOCATION,
     CONTENT_TYPES_NAMESPACE,
     CONTENT_TYPES_LOCATION,
+    CORE_PROPERTIES_LOCATION,
+    CORE_PROPERTIES_REL,
+    CORE_PROPERTIES_MIMETYPE,
 )
 
 
@@ -231,6 +234,18 @@ class Annotations:
                 )
                 current_id += 1
 
+                # Add Core Properties relationship (OPC metadata)
+                xml.etree.ElementTree.SubElement(
+                    root,
+                    f"{{{RELS_NAMESPACE}}}Relationship",
+                    attrib={
+                        f"{{{RELS_NAMESPACE}}}Id": f"rel{current_id}",
+                        f"{{{RELS_NAMESPACE}}}Target": f"/{CORE_PROPERTIES_LOCATION}",
+                        f"{{{RELS_NAMESPACE}}}Type": CORE_PROPERTIES_REL,
+                    },
+                )
+                current_id += 1
+
             document = xml.etree.ElementTree.ElementTree(root)
 
             # Write that XML document to a file.
@@ -270,6 +285,7 @@ class Annotations:
         most_common[".rels"] = RELS_MIMETYPE
         most_common[".model"] = MODEL_MIMETYPE
         most_common[".config"] = "application/xml"  # For Orca Slicer metadata files
+        most_common[".xml"] = CORE_PROPERTIES_MIMETYPE  # For Core Properties (docProps/core.xml)
 
         # Write an XML file that contains the extension rules for the most common cases,
         # but specific overrides for the outliers.

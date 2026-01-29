@@ -1,3 +1,66 @@
+1.2.0 — Production Extension & Orca Slicer Compatibility
+====
+This release adds full support for the 3MF Production Extension and comprehensive Orca Slicer/BambuStudio compatibility, enabling multi-color workflows between Blender and modern slicers.
+
+Features
+----
+* **Production Extension Support:**
+  - Full implementation of the 3MF Production Extension (`http://schemas.microsoft.com/3dmanufacturing/production/2015/06`)
+  - Multi-file export structure with individual object models in `3D/Objects/`
+  - `p:path` and `p:UUID` component references for external model files
+  - Proper OPC relationship files (`3D/_rels/3dmodel.model.rels`)
+  - Import support for external model file references
+
+* **Orca Slicer / BambuStudio Compatibility:**
+  - **Export:** New "Orca Slicer Color Zones" option exports face colors as filament zones
+  - **Export:** Per-triangle `paint_color` attributes for precise filament assignment
+  - **Export:** Generates `Metadata/project_settings.config` with filament colors
+  - **Import:** Reads `paint_color` attributes and creates corresponding Blender materials
+  - **Import:** Extracts actual filament colors from `project_settings.config`
+  - **Round-trip:** Full color preservation between Blender and Orca Slicer
+
+* **3MF Core Specification v1.3.0 Compliance:**
+  - Added `SPEC_VERSION` constant tracking specification version
+  - Support for `recommendedextensions` attribute (v1.3.0 addition)
+  - OPC Core Properties with Dublin Core metadata
+  - Improved extension validation with prefix-to-namespace resolution
+
+* **Extension Framework:**
+  - New `extensions.py` module with `ExtensionManager` class
+  - Extensible architecture for adding future 3MF extensions
+  - Support for required vs optional extensions
+  - Human-readable extension names in warnings
+
+* **Import Options:**
+  - New "Import Materials" checkbox to control material/color import
+  - Configurable default via addon preferences
+  - Automatic vendor format detection (Orca/Bambu/Prusa)
+
+Technical Improvements
+----
+* **Extension Prefix Resolution:**
+  - Fixed `requiredextensions="p"` validation (was comparing prefix to namespace URI)
+  - `resolve_extension_prefixes()` maps XML prefixes to full namespace URIs
+  - Known prefix mappings for Production, Materials, and Slic3r extensions
+
+* **Color Indexing:**
+  - 1-based filament indexing matching Orca Slicer's `paint_color` encoding
+  - Proper mapping between paint codes ("4", "8", "0C", etc.) and filament array indices
+  - Case-insensitive paint code parsing
+
+* **Code Organization:**
+  - Separated Orca export into dedicated methods (`execute_orca_export`, `write_orca_object_model`, etc.)
+  - Standard export preserved in `execute_standard_export`
+  - Clean separation of vendor-specific and standard 3MF handling
+
+Documentation
+----
+* Updated README with comprehensive Extensions section
+* Added Orca Slicer compatibility documentation
+* Round-trip workflow instructions
+
+---
+
 1.1.3 — Unicode String Caching & Garbage Collection Protection
 ====
 This release adds comprehensive defensive string caching throughout the add-on to protect Unicode characters from Python's garbage collector. This ensures users with non-ASCII characters (Chinese, Japanese, Korean, Arabic, emoji, etc.) in object names, material names, file paths, and metadata will not experience corruption or data loss.

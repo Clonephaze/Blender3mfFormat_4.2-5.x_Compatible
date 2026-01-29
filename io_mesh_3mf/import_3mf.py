@@ -12,6 +12,7 @@
 
 import base64  # To encode MustPreserve files in the Blender scene.
 import collections  # For namedtuple.
+import json  # For reading Orca project_settings.config
 import logging  # To debug and log progress.
 import os.path  # To take file paths relative to the selected directory.
 import re  # To find files in the archive based on the content types.
@@ -38,8 +39,14 @@ from .constants import (
     MODEL_NAMESPACES,
     MODEL_DEFAULT_UNIT,
     SUPPORTED_EXTENSIONS,
+    PRODUCTION_NAMESPACE,
     CONTENT_TYPES_LOCATION,
     conflicting_mustpreserve_contents,
+)
+from .extensions import (
+    ExtensionManager,
+    PRODUCTION_EXTENSION,
+    get_extension_by_namespace,
 )
 from .metadata import Metadata, MetadataEntry  # To store and serialize metadata.
 from .unit_conversions import (  # To convert to Blender's units.
@@ -55,8 +62,55 @@ log = logging.getLogger(__name__)
 ResourceObject = collections.namedtuple(
     "ResourceObject", ["vertices", "triangles", "materials", "components", "metadata"]
 )
-Component = collections.namedtuple("Component", ["resource_object", "transformation"])
+# Component with optional path field for Production Extension support
+# Using defaults parameter (Python 3.7+) to make path optional
+Component = collections.namedtuple("Component", ["resource_object", "transformation", "path"], defaults=[None])
 ResourceMaterial = collections.namedtuple("ResourceMaterial", ["name", "color"])
+
+# Orca Slicer paint_color decoding - maps paint codes to filament indices
+# This is the reverse of ORCA_FILAMENT_CODES in export_3mf.py
+# Note: Paint codes can be uppercase or lowercase, so we'll normalize to uppercase
+ORCA_PAINT_TO_INDEX = {
+    "": 0, "4": 1, "8": 2, "0C": 3, "1C": 4, "2C": 5, "3C": 6, "4C": 7,
+    "5C": 8, "6C": 9, "7C": 10, "8C": 11, "9C": 12, "AC": 13, "BC": 14, "CC": 15,
+    "DC": 16, "EC": 17, "0FC": 18, "1FC": 19, "2FC": 20, "3FC": 21, "4FC": 22,
+    "5FC": 23, "6FC": 24, "7FC": 25, "8FC": 26, "9FC": 27, "AFC": 28, "BFC": 29,
+}
+
+def parse_paint_color_to_index(paint_code: str) -> int:
+    """
+    Parse a paint_color code to a filament index.
+    
+    Handles case insensitivity and unknown codes.
+    
+    :param paint_code: The paint_color attribute value.
+    :return: Filament index (1-based), or 0 if no color.
+    """
+    if not paint_code:
+        return 0
+    
+    # Normalize to uppercase for lookup
+    normalized = paint_code.upper()
+    if normalized in ORCA_PAINT_TO_INDEX:
+        return ORCA_PAINT_TO_INDEX[normalized]
+    
+    # Try without normalization
+    if paint_code in ORCA_PAINT_TO_INDEX:
+        return ORCA_PAINT_TO_INDEX[paint_code]
+    
+    # Unknown code - try to parse it directly
+    # Paint codes are hex-based: 4=1, 8=2, then 0C, 1C, etc.
+    try:
+        # This handles codes beyond our predefined list
+        log.warning(f"Unknown paint_color code: {paint_code}, using as filament 1")
+        return 1
+    except:
+        return 0
+
+# Production Extension namespace for p:path attributes
+PRODUCTION_NAMESPACES = {
+    "p": "http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
+}
 
 
 class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
@@ -80,12 +134,30 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
     global_scale: bpy.props.FloatProperty(
         name="Scale", default=1.0, soft_min=0.001, soft_max=1000.0, min=1e-6, max=1e6
     )
+    import_materials: bpy.props.BoolProperty(
+        name="Import Materials",
+        description="Import material colors from the 3MF file (includes standard basematerials and vendor color zones). "
+                    "Disable to import geometry only",
+        default=True,
+    )
 
+    def draw(self, context):
+        """Draw the import options in the file browser."""
+        layout = self.layout
+        
+        layout.prop(self, "global_scale")
+        layout.separator()
+        
+        box = layout.box()
+        box.label(text="Import Options:", icon='IMPORT')
+        box.prop(self, "import_materials")
+    
     def invoke(self, context, event):
         """Initialize properties from preferences when the import dialog is opened."""
         prefs = context.preferences.addons.get(__package__)
         if prefs and prefs.preferences:
             self.global_scale = prefs.preferences.default_global_scale
+            self.import_materials = prefs.preferences.default_import_materials
         return super().invoke(context, event)
 
     def safe_report(self, level: Set[str], message: str) -> None:
@@ -98,6 +170,35 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         if hasattr(self, 'report') and callable(getattr(self, 'report', None)):
             self.report(level, message)
         # If report is not available, the message has already been logged via the log module
+
+    def detect_vendor(self, root: xml.etree.ElementTree.Element) -> Optional[str]:
+        """
+        Detect if this 3MF file was created by a specific vendor/slicer.
+        
+        This allows us to handle vendor-specific extensions appropriately.
+        
+        :param root: The root element of the 3MF model document
+        :return: Vendor identifier string (e.g., 'orca', 'bambu') or None for standard 3MF
+        """
+        # Check for BambuStudio/Orca Slicer specific metadata
+        for metadata_node in root.iterfind("./3mf:metadata", MODEL_NAMESPACES):
+            name = metadata_node.attrib.get("name", "")
+            if name == "BambuStudio:3mfVersion":
+                log.info("Detected BambuStudio/Orca Slicer format")
+                return "orca"
+            if name == "Application" and metadata_node.text:
+                app_name = metadata_node.text.lower()
+                if "orca" in app_name or "bambu" in app_name:
+                    log.info(f"Detected Orca/Bambu format from Application: {metadata_node.text}")
+                    return "orca"
+        
+        # Check for BambuStudio namespace in root attributes
+        for attr_name in root.attrib:
+            if "bambu" in attr_name.lower():
+                log.info(f"Detected BambuStudio format from attribute: {attr_name}")
+                return "orca"
+        
+        return None
 
     def execute(self, context: bpy.types.Context) -> Set[str]:
         """
@@ -112,6 +213,8 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         self.resource_materials = {}
         self.resource_to_material = {}
         self.num_loaded = 0
+        self.vendor_format = None  # Will be set when we detect vendor-specific format
+        self.extension_manager = ExtensionManager()  # Track active extensions
         scene_metadata = Metadata()
         # If there was already metadata in the scene, combine that with this file.
         scene_metadata.retrieve(bpy.context.scene)
@@ -134,6 +237,9 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
             bpy.ops.object.select_all(action="DESELECT")  # Deselect other files.
 
         for path in paths:
+            # Store current archive path for Production Extension support
+            self.current_archive_path = path
+            
             files_by_content_type = self.read_archive(
                 path
             )  # Get the files from the archive.
@@ -157,15 +263,84 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                     # though.
                     continue  # Leave the scene empty / skip this file.
                 root = document.getroot()
-                if not self.is_supported(root.attrib.get("requiredextensions", "")):
-                    log.warning(f"3MF document in {path} requires unknown extensions.")
-                    self.safe_report({'WARNING'}, f"3MF document in {path} requires unknown extensions.")
+                
+                # Detect vendor-specific format (if materials are enabled)
+                if self.import_materials:
+                    self.vendor_format = self.detect_vendor(root)
+                    if self.vendor_format:
+                        self.safe_report({'INFO'}, f"Detected {self.vendor_format.upper()} Slicer format")
+                        log.info(f"Will import {self.vendor_format} specific color data")
+                else:
+                    self.vendor_format = None
+                    log.info("Material import disabled: importing geometry only")
+                
+                # Activate extensions based on what's declared in the file
+                required_ext = root.attrib.get("requiredextensions", "")
+                if required_ext:
+                    resolved_namespaces = self.resolve_extension_prefixes(root, required_ext)
+                    for ns in resolved_namespaces:
+                        if ns in SUPPORTED_EXTENSIONS:
+                            self.extension_manager.activate(ns)
+                            log.info(f"Activated required extension: {ns}")
+                
+                # Validate required extensions
+                if not self.is_supported(root.attrib.get("requiredextensions", ""), root):
+                    unsupported = root.attrib.get("requiredextensions", "")
+                    resolved = self.resolve_extension_prefixes(root, unsupported)
+                    # Only show warning for truly unsupported extensions
+                    truly_unsupported = resolved - SUPPORTED_EXTENSIONS
+                    if truly_unsupported:
+                        # Try to get human-readable extension names
+                        ext_names = []
+                        for ns in truly_unsupported:
+                            ext = get_extension_by_namespace(ns)
+                            if ext:
+                                ext_names.append(f"{ext.name} ({ext.extension_type.value})")
+                            else:
+                                ext_names.append(ns)
+                        
+                        ext_list = ", ".join(ext_names) if ext_names else ", ".join(truly_unsupported)
+                        log.warning(f"3MF document in {path} requires unsupported extensions: {ext_list}")
+                        self.safe_report({'WARNING'}, f"3MF document requires unsupported extensions: {ext_list}")
                     # Still continue processing even though the spec says not to. Our aim is to retrieve whatever
                     # information we can.
+
+                # Check for recommended extensions (v1.3.0 spec addition)
+                recommended = root.attrib.get("recommendedextensions", "")
+                if recommended:
+                    resolved_recommended = self.resolve_extension_prefixes(root, recommended)
+                    for ns in resolved_recommended:
+                        if ns in SUPPORTED_EXTENSIONS:
+                            self.extension_manager.activate(ns)
+                            log.info(f"Activated recommended extension: {ns}")
+                    
+                    if not self.is_supported(recommended, root):
+                        truly_unsupported = resolved_recommended - SUPPORTED_EXTENSIONS
+                        if truly_unsupported:
+                            # Try to get human-readable extension names
+                            rec_names = []
+                            for ns in truly_unsupported:
+                                ext = get_extension_by_namespace(ns)
+                                if ext:
+                                    rec_names.append(f"{ext.name} ({ext.extension_type.value})")
+                                else:
+                                    rec_names.append(ns)
+                            
+                            rec_list = ", ".join(rec_names) if rec_names else ", ".join(truly_unsupported)
+                            log.info(f"3MF document in {path} recommends extensions not fully supported: {rec_list}")
+                            self.safe_report(
+                                {'INFO'},
+                                f"Document recommends extensions not fully supported: {rec_list}"
+                            )
 
                 scale_unit = self.unit_scale(context, root)
                 self.resource_objects = {}
                 self.resource_materials = {}
+                self.orca_filament_colors = {}  # Maps filament index -> hex color
+                
+                # Try to read Orca filament colors from project_settings.config
+                self.read_orca_filament_colors(path)
+                
                 scene_metadata = self.read_metadata(root, scene_metadata)
                 self.read_materials(root)
                 self.read_objects(root)
@@ -409,15 +584,74 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                         handle = bpy.data.texts.new(filename)
                         handle.write(file_contents)
 
-    def is_supported(self, required_extensions: str) -> bool:
+    def resolve_extension_prefixes(self, root: xml.etree.ElementTree.Element, 
+                                   prefixes: str) -> Set[str]:
+        """
+        Resolve extension prefixes to their full namespace URIs.
+        
+        Per the 3MF spec, the `requiredextensions` attribute contains space-separated
+        prefixes (like "p" for Production Extension), not full namespace URIs.
+        This function maps those prefixes to the actual namespace URIs using the
+        xmlns declarations on the root element.
+        
+        :param root: The XML root element containing namespace declarations.
+        :param prefixes: Space-separated extension prefixes.
+        :return: Set of full namespace URIs.
+        """
+        if not prefixes:
+            return set()
+        
+        # Get namespace map from root element
+        # Note: We need to iterate through attribs to find xmlns:prefix declarations
+        # because ElementTree doesn't expose nsmap directly
+        prefix_to_ns = {}
+        for attr_name, attr_value in root.attrib.items():
+            if attr_name.startswith("{"):
+                # This is a namespaced attribute like {http://...}name
+                continue
+            if attr_name.startswith("xmlns:"):
+                prefix = attr_name[6:]  # Remove "xmlns:" prefix
+                prefix_to_ns[prefix] = attr_value
+        
+        # Also handle when the file was parsed with namespace awareness
+        # In that case, we won't see xmlns: attributes, so use known mappings
+        known_prefix_mappings = {
+            "p": PRODUCTION_NAMESPACE,
+            "m": "http://schemas.microsoft.com/3dmanufacturing/material/2015/02",
+            "slic3rpe": "http://schemas.slic3r.org/3mf/2017/06",
+        }
+        prefix_to_ns.update({k: v for k, v in known_prefix_mappings.items() 
+                           if k not in prefix_to_ns})
+        
+        # Resolve prefixes to namespace URIs
+        resolved = set()
+        for prefix in prefixes.split():
+            prefix = prefix.strip()
+            if not prefix:
+                continue
+            if prefix in prefix_to_ns:
+                resolved.add(prefix_to_ns[prefix])
+            else:
+                # Unknown prefix - keep as-is for warning purposes
+                resolved.add(prefix)
+                log.debug(f"Unknown extension prefix: {prefix}")
+        
+        return resolved
+
+    def is_supported(self, required_extensions: str, 
+                     root: Optional[xml.etree.ElementTree.Element] = None) -> bool:
         """
         Determines if a document is supported by this add-on.
         :param required_extensions: The value of the `requiredextensions` attribute of the root node of the XML
         document.
+        :param root: Optional root element to resolve prefixes to namespace URIs.
         :return: `True` if the document is supported, or `False` if it's not.
         """
-        extensions = required_extensions.split(" ")
-        extensions = set(filter(lambda x: x != "", extensions))
+        if root is not None:
+            extensions = self.resolve_extension_prefixes(root, required_extensions)
+        else:
+            # Fallback: treat as prefixes/namespaces directly
+            extensions = set(filter(lambda x: x != "", required_extensions.split(" ")))
         return extensions <= SUPPORTED_EXTENSIONS
 
     def unit_scale(self, context: bpy.types.Context,
@@ -482,10 +716,20 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
     def read_materials(self, root: xml.etree.ElementTree.Element) -> None:
         """
         Read out all of the material resources from the 3MF document.
+        
+        Supports:
+        - Core spec <basematerials> (standard 3MF)
+        - Materials extension <m:colorgroup> (Orca/BambuStudio vendor format)
 
         The materials will be stored in `self.resource_materials` until it gets used to build the items.
         :param root: The root of an XML document that may contain materials.
         """
+        # Skip all material import if disabled
+        if not self.import_materials:
+            log.info("Material import disabled, skipping all material data")
+            return
+        
+        # Import core spec basematerials
         for basematerials_item in root.iterfind(
             "./3mf:resources/3mf:basematerials", MODEL_NAMESPACES
         ):
@@ -554,6 +798,72 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                 del self.resource_materials[
                     material_id
                 ]  # Don't leave empty material sets hanging.
+        
+        # Import Materials extension colorgroups (vendor-specific: Orca/BambuStudio)
+        # These are imported automatically when import_materials=True
+        # Namespace: http://schemas.microsoft.com/3dmanufacturing/material/2015/02
+        from .constants import MATERIAL_NAMESPACE
+        material_ns = {"m": MATERIAL_NAMESPACE}
+        
+        for colorgroup_item in root.iterfind(
+            "./3mf:resources/m:colorgroup",
+            {**MODEL_NAMESPACES, **material_ns}
+        ):
+            try:
+                colorgroup_id = colorgroup_item.attrib["id"]
+            except KeyError:
+                log.warning("Encountered a colorgroup without resource ID.")
+                self.safe_report({'WARNING'}, "Encountered a colorgroup without resource ID")
+                continue
+            
+            if colorgroup_id in self.resource_materials:
+                log.warning(f"Duplicate material ID: {colorgroup_id}")
+                self.safe_report({'WARNING'}, f"Duplicate material ID: {colorgroup_id}")
+                continue
+            
+            # Colorgroups in Orca format: each group has one or more colors
+            # We'll treat this as a material group with index 0 for the first color
+            self.resource_materials[colorgroup_id] = {}
+            index = 0
+            
+            for color_item in colorgroup_item.iterfind("./m:color", material_ns):
+                color = color_item.attrib.get("color")
+                if color is not None:
+                    color = color.lstrip("#")
+                    try:
+                        if len(color) == 6:  # RGB
+                            red = int(color[0:2], 16) / 255
+                            green = int(color[2:4], 16) / 255
+                            blue = int(color[4:6], 16) / 255
+                            alpha = 1.0
+                        elif len(color) == 8:  # RGBA
+                            red = int(color[0:2], 16) / 255
+                            green = int(color[2:4], 16) / 255
+                            blue = int(color[4:6], 16) / 255
+                            alpha = int(color[6:8], 16) / 255
+                        else:
+                            log.warning(f"Invalid color for colorgroup {colorgroup_id}: #{color}")
+                            self.safe_report({'WARNING'}, f"Invalid color: #{color}")
+                            continue
+                        
+                        # Store as ResourceMaterial for compatibility
+                        mat_color = (red, green, blue, alpha)
+                        self.resource_materials[colorgroup_id][index] = ResourceMaterial(
+                            name=f"Orca Color {index}",
+                            color=mat_color
+                        )
+                        index += 1
+                        
+                    except (ValueError, KeyError) as e:
+                        log.warning(f"Invalid color for colorgroup {colorgroup_id}: {e}")
+                        continue
+            
+            if index > 0:
+                log.info(f"Imported colorgroup {colorgroup_id} with {index} colors")
+                if self.vendor_format == "orca":
+                    self.safe_report({'INFO'}, f"Imported Orca color zone: {index} color(s)")
+            elif colorgroup_id in self.resource_materials:
+                del self.resource_materials[colorgroup_id]  # Don't leave empty groups
 
     def read_objects(self, root: xml.etree.ElementTree.Element) -> None:
         """
@@ -582,15 +892,22 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                     index = int(pindex)
                     material = self.resource_materials[pid][index]
                 except KeyError:
-                    log.warning(
-                        f"Object with ID {objectid} refers to material collection {pid} with index {pindex}"
-                        f" which doesn't exist."
-                    )
-                    self.safe_report(
-                        {'WARNING'},
-                        f"Object with ID {objectid} refers to material collection {pid} "
-                        f"with index {pindex} which doesn't exist"
-                    )
+                    # Only warn if materials were supposed to be imported
+                    if self.import_materials:
+                        log.warning(
+                            f"Object with ID {objectid} refers to material collection {pid} with index {pindex}"
+                            f" which doesn't exist."
+                        )
+                        self.safe_report(
+                            {'WARNING'},
+                            f"Object with ID {objectid} refers to material collection {pid} "
+                            f"with index {pindex} which doesn't exist"
+                        )
+                    else:
+                        log.debug(
+                            f"Object with ID {objectid} refers to material {pid}:{pindex} "
+                            f"(skipped due to import_materials=False)"
+                        )
                 except ValueError:
                     log.warning(
                         f"Object with ID {objectid} specifies material index {pindex}, which is not integer."
@@ -602,6 +919,13 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
             vertices = self.read_vertices(object_node)
             triangles, materials = self.read_triangles(object_node, material, pid)
             components = self.read_components(object_node)
+            
+            # Check if components have p:path references (Production Extension)
+            # If so, load the external model files
+            for component in components:
+                if component.path:
+                    self.load_external_model(component.path)
+            
             metadata = Metadata()
             for metadata_node in object_node.iterfind(
                 "./3mf:metadatagroup", MODEL_NAMESPACES
@@ -715,9 +1039,12 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                     try:
                         material = self.resource_materials[pid][int(p1)]
                     except KeyError as e:
-                        # Sorry. It's hard to give an exception more specific than this.
-                        log.warning(f"Material {e} is missing.")
-                        self.safe_report({'WARNING'}, f"Material {e} is missing")
+                        # Only warn if materials were supposed to be imported
+                        if self.import_materials:
+                            log.warning(f"Material {e} is missing.")
+                            self.safe_report({'WARNING'}, f"Material {e} is missing")
+                        else:
+                            log.debug(f"Material {e} skipped (import_materials=False)")
                         material = default_material
                     except ValueError as e:
                         log.warning(f"Material index is not an integer: {e}")
@@ -742,10 +1069,16 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
 
         These components refer to other resource objects, with a transformation applied. They will eventually appear in
         the scene as sub-objects.
+        
+        Supports Production Extension p:path attribute for external model file references.
         :param object_node: An <object> element from the 3dmodel.model file.
         :return: List of components in this object node.
         """
         result = []
+        
+        # Combined namespaces for both core 3MF and Production Extension
+        combined_ns = {**MODEL_NAMESPACES, **PRODUCTION_NAMESPACES}
+        
         for component_node in object_node.iterfind(
             "./3mf:components/3mf:component", MODEL_NAMESPACES
         ):
@@ -756,9 +1089,283 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
             transform = self.parse_transformation(
                 component_node.attrib.get("transform", "")
             )
-
-            result.append(Component(resource_object=objectid, transformation=transform))
+            
+            # Check for Production Extension p:path attribute
+            # This references an external model file
+            path = component_node.attrib.get(f"{{{PRODUCTION_NAMESPACE}}}path")
+            if path:
+                log.info(f"Component references external model: {path}")
+            
+            result.append(Component(resource_object=objectid, transformation=transform, path=path))
         return result
+
+    def load_external_model(self, model_path: str) -> None:
+        """
+        Load an external model file referenced by Production Extension p:path.
+        
+        This is used by Orca Slicer/BambuStudio which stores each object in a separate
+        model file under 3D/Objects/.
+        
+        :param model_path: The path to the model file (e.g., "/3D/Objects/Cube_1.model")
+        """
+        if not hasattr(self, 'current_archive_path') or not self.current_archive_path:
+            log.warning(f"Cannot load external model {model_path}: no archive path set")
+            return
+        
+        # Normalize path (remove leading slash for archive access)
+        archive_path = model_path.lstrip('/')
+        
+        try:
+            with zipfile.ZipFile(self.current_archive_path, 'r') as archive:
+                if archive_path not in archive.namelist():
+                    log.warning(f"External model file not found in archive: {archive_path}")
+                    return
+                
+                with archive.open(archive_path) as model_file:
+                    try:
+                        document = xml.etree.ElementTree.parse(model_file)
+                    except xml.etree.ElementTree.ParseError as e:
+                        log.error(f"External model {archive_path} is malformed: {e}")
+                        self.safe_report({'ERROR'}, f"External model {archive_path} is malformed")
+                        return
+                    
+                    root = document.getroot()
+                    
+                    # Read objects from this external model file
+                    self.read_external_model_objects(root, model_path)
+                    
+                    log.info(f"Loaded external model: {archive_path}")
+                    
+        except (zipfile.BadZipFile, IOError) as e:
+            log.error(f"Failed to read external model {archive_path}: {e}")
+            self.safe_report({'ERROR'}, f"Failed to read external model: {e}")
+
+    def read_external_model_objects(self, root: xml.etree.ElementTree.Element, source_path: str) -> None:
+        """
+        Read objects from an external model file (Production Extension).
+        
+        This handles the paint_color attribute used by Orca Slicer for per-triangle colors.
+        
+        :param root: The root element of the external model XML file.
+        :param source_path: The path of the source file (for logging).
+        """
+        for object_node in root.iterfind(
+            "./3mf:resources/3mf:object", MODEL_NAMESPACES
+        ):
+            try:
+                objectid = object_node.attrib["id"]
+            except KeyError:
+                log.warning(f"Object in {source_path} without ID!")
+                continue
+            
+            # Skip if we already have this object (don't overwrite)
+            if objectid in self.resource_objects:
+                log.debug(f"Object {objectid} already loaded, skipping duplicate from {source_path}")
+                continue
+            
+            vertices = self.read_vertices(object_node)
+            triangles, materials = self.read_triangles_with_paint_color(object_node)
+            components = self.read_components(object_node)
+            
+            metadata = Metadata()
+            for metadata_node in object_node.iterfind(
+                "./3mf:metadatagroup", MODEL_NAMESPACES
+            ):
+                metadata = self.read_metadata(metadata_node, metadata)
+            
+            if "name" in object_node.attrib and "Title" not in metadata:
+                object_name = str(object_node.attrib.get("name"))
+                metadata["Title"] = MetadataEntry(
+                    name="Title",
+                    preserve=True,
+                    datatype="xs:string",
+                    value=object_name
+                )
+            
+            metadata["3mf:object_type"] = MetadataEntry(
+                name="3mf:object_type",
+                preserve=True,
+                datatype="xs:string",
+                value=object_node.attrib.get("type", "model"),
+            )
+            
+            self.resource_objects[objectid] = ResourceObject(
+                vertices=vertices,
+                triangles=triangles,
+                materials=materials,
+                components=components,
+                metadata=metadata,
+            )
+            log.info(f"Loaded object {objectid} from {source_path} with {len(vertices)} vertices, {len(triangles)} triangles")
+
+    def read_triangles_with_paint_color(self, object_node: xml.etree.ElementTree.Element) -> Tuple[List[Tuple[int, int, int]], List[Optional[ResourceMaterial]]]:
+        """
+        Read triangles from an object node, handling paint_color attributes (Orca Slicer format).
+        
+        This creates materials on-the-fly from paint_color values.
+        
+        :param object_node: An <object> element from a model file.
+        :return: Tuple of (triangle list, material list).
+        """
+        vertices = []
+        materials = []
+        
+        # Track paint_color to material mapping for this object
+        paint_color_materials = {}
+        
+        for triangle in object_node.iterfind(
+            "./3mf:mesh/3mf:triangles/3mf:triangle", MODEL_NAMESPACES
+        ):
+            attrib = triangle.attrib
+            try:
+                v1 = int(attrib["v1"])
+                v2 = int(attrib["v2"])
+                v3 = int(attrib["v3"])
+                if v1 < 0 or v2 < 0 or v3 < 0:
+                    log.warning("Triangle with negative vertex index.")
+                    continue
+                
+                vertices.append((v1, v2, v3))
+                
+                # Handle paint_color attribute (Orca Slicer)
+                # Only triangles WITH paint_color get materials (filament_index 1+)
+                # Triangles without paint_color are unpainted (no material)
+                material = None
+                if self.import_materials and hasattr(self, 'orca_filament_colors') and self.orca_filament_colors:
+                    paint_color = attrib.get("paint_color")  # None if not present
+                    if paint_color:  # Only process if paint_color attribute exists and is non-empty
+                        if paint_color not in paint_color_materials:
+                            # Create a material for this paint_color
+                            filament_index = parse_paint_color_to_index(paint_color)
+                            if filament_index > 0:  # Valid filament (1+)
+                                material = self.get_or_create_paint_material(filament_index, paint_color)
+                                paint_color_materials[paint_color] = material
+                                log.debug(f"Paint color '{paint_color}' -> filament {filament_index}")
+                        else:
+                            material = paint_color_materials[paint_color]
+                
+                materials.append(material)
+                
+            except KeyError as e:
+                log.warning(f"Triangle missing vertex: {e}")
+                continue
+            except ValueError as e:
+                log.warning(f"Invalid vertex reference: {e}")
+                continue
+        
+        return vertices, materials
+
+    def get_or_create_paint_material(self, filament_index: int, paint_code: str) -> ResourceMaterial:
+        """
+        Get or create a material for an Orca Slicer paint_color.
+        
+        Uses actual colors from project_settings.config if available, otherwise generates colors.
+        
+        :param filament_index: The filament index (1-based from paint_color codes: "4"=1, "8"=2, etc.).
+        :param paint_code: The original paint code string.
+        :return: A ResourceMaterial for this paint color.
+        """
+        # Generate a unique material ID for paint colors
+        material_id = f"paint_{filament_index}_{paint_code}"
+        
+        if material_id not in self.resource_materials:
+            # Try to get actual color from orca_filament_colors
+            # filament_index is 1-based (from paint codes), but filament_colour array is 0-indexed
+            # So filament 1 ("4") -> filament_colour[0], filament 2 ("8") -> filament_colour[1]
+            color = None
+            color_name = f"Filament {filament_index}"
+            array_index = filament_index - 1  # Convert 1-based to 0-based
+            
+            if hasattr(self, 'orca_filament_colors') and array_index >= 0 and array_index in self.orca_filament_colors:
+                hex_color = self.orca_filament_colors[array_index]
+                color = self.parse_hex_color(hex_color)
+                color_name = f"Color {hex_color}"
+                log.info(f"Using Orca filament color {filament_index} (array index {array_index}): {hex_color}")
+            
+            if color is None:
+                # Fallback: generate a color based on filament index
+                import colorsys
+                hue = (filament_index * 0.618033988749895) % 1.0  # Golden ratio for good distribution
+                r, g, b = colorsys.hsv_to_rgb(hue, 0.8, 0.9)
+                color = (r, g, b, 1.0)
+                log.info(f"Generated fallback color for filament {filament_index}")
+            
+            self.resource_materials[material_id] = {
+                0: ResourceMaterial(
+                    name=color_name,
+                    color=color
+                )
+            }
+            log.info(f"Created paint material for filament {filament_index} (code: {paint_code})")
+        
+        return self.resource_materials[material_id][0]
+
+    def read_orca_filament_colors(self, archive_path: str) -> None:
+        """
+        Read filament colors from Orca Slicer's project_settings.config.
+        
+        This file contains the filament_colour array with hex colors for each filament.
+        
+        :param archive_path: Path to the 3MF archive file.
+        """
+        if not self.import_materials:
+            return
+        
+        try:
+            with zipfile.ZipFile(archive_path, 'r') as archive:
+                config_path = "Metadata/project_settings.config"
+                if config_path not in archive.namelist():
+                    log.debug(f"No {config_path} in archive, skipping Orca color import")
+                    return
+                
+                with archive.open(config_path) as config_file:
+                    try:
+                        config = json.load(config_file)
+                    except json.JSONDecodeError as e:
+                        log.warning(f"Failed to parse {config_path}: {e}")
+                        return
+                    
+                    # Extract filament_colour array
+                    filament_colours = config.get("filament_colour", [])
+                    if filament_colours:
+                        # Use 0-indexed storage to match paint_color codes:
+                        # - No paint_color / paint_color="" -> filament 0 -> first color
+                        # - paint_color="4" -> filament 1 -> second color
+                        # - paint_color="8" -> filament 2 -> third color
+                        for idx, hex_color in enumerate(filament_colours):
+                            self.orca_filament_colors[idx] = hex_color
+                        
+                        log.info(f"Loaded {len(filament_colours)} Orca filament colors: {filament_colours}")
+                        self.safe_report({'INFO'}, f"Loaded {len(filament_colours)} Orca filament colors")
+                    
+        except (zipfile.BadZipFile, IOError) as e:
+            log.debug(f"Could not read Orca config from {archive_path}: {e}")
+
+    def parse_hex_color(self, hex_color: str) -> Tuple[float, float, float, float]:
+        """
+        Parse a hex color string to RGBA tuple.
+        
+        :param hex_color: Hex color string like "#FF0000" or "FF0000"
+        :return: RGBA tuple with values 0.0-1.0
+        """
+        hex_color = hex_color.lstrip('#')
+        try:
+            if len(hex_color) == 6:  # RGB
+                r = int(hex_color[0:2], 16) / 255.0
+                g = int(hex_color[2:4], 16) / 255.0
+                b = int(hex_color[4:6], 16) / 255.0
+                return (r, g, b, 1.0)
+            elif len(hex_color) == 8:  # RGBA
+                r = int(hex_color[0:2], 16) / 255.0
+                g = int(hex_color[2:4], 16) / 255.0
+                b = int(hex_color[4:6], 16) / 255.0
+                a = int(hex_color[6:8], 16) / 255.0
+                return (r, g, b, a)
+        except ValueError:
+            pass
+        
+        log.warning(f"Could not parse hex color: {hex_color}")
+        return (0.8, 0.8, 0.8, 1.0)  # Default gray
 
     def parse_transformation(self, transformation_str: str) -> mathutils.Matrix:
         """
