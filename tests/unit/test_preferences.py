@@ -17,7 +17,7 @@ Unit tests for addon preferences functionality.
 import unittest
 import unittest.mock
 
-from .mock.bpy import MockOperator, MockExportHelper, MockImportHelper
+from mock.bpy import MockOperator, MockExportHelper, MockImportHelper
 
 # Set up mocks before importing the module under test
 import bpy.types

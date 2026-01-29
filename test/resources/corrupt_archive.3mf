@@ -1,1 +1,0 @@
-This is not really an archive, so trying to open it with zipfile will raise a zipfile.BadZipFile error.

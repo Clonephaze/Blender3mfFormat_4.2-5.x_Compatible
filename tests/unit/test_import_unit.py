@@ -19,7 +19,7 @@ import unittest.mock  # To mock away the Blender API.
 import xml.etree.ElementTree  # To construct 3MF documents as input for the importer functions.
 import zipfile  # To provide zip archives to some functions.
 
-from .mock.bpy import MockOperator, MockExportHelper, MockImportHelper
+from mock.bpy import MockOperator, MockExportHelper, MockImportHelper
 
 # The import and export classes inherit from classes from the Blender API. These classes would be MagicMocks as well.
 # However their metaclasses are then also MagicMocks, but different instances of MagicMock.
@@ -79,7 +79,8 @@ class TestImport3MF(unittest.TestCase):
         # A dummy stream to write to, in order to construct archives to import from in-memory.
         self.black_hole = io.BytesIO()
 
-        self.resources_path = os.path.join(os.path.dirname(__file__), "resources")
+        # Resources are in tests/resources (one level up from unit/)
+        self.resources_path = os.path.join(os.path.dirname(__file__), "..", "resources")
 
         # Reset the Blender context before each test.
         bpy.context = unittest.mock.MagicMock()

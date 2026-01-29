@@ -1,21 +1,22 @@
-# Blender 3MF Format - Integration Test Suite
+# Blender 3MF Format - Test Suite
 
-This directory contains **integration tests** for the Blender 3MF addon. All tests run directly in Blender's Python environment using the real `bpy` API - no mocks!
+This directory contains all tests for the Blender 3MF addon, organized into two categories:
 
-These tests validate **user-facing functionality** - what actually happens when users export/import 3MF files in Blender.
+- **`unit/`** - Unit tests that test individual functions with mocked data
+- **`integration/`** - Integration tests that use the real Blender `bpy` API
+
+All tests run through Blender's Python environment using `blender --background --python`.
 
 ## 🚀 Quick Start
 
-### Run All Tests
+### Run All Tests (185 tests)
 ```powershell
-# Windows (PowerShell)
-.\tests\run_tests.ps1
+# Run ALL tests - unit + integration (recommended)
+python tests/run_all_tests.py
 
-# macOS/Linux (Bash)
-./tests/run_tests.sh
-
-# Direct invocation
-blender --background --python tests/run_tests.py
+# Or run separately:
+blender --background --python tests/run_unit_tests.py    # Unit tests (130, ~0.5s)
+blender --background --python tests/run_tests.py         # Integration tests (55, ~3s)
 ```
 
 ### Run Specific Test Modules
@@ -28,76 +29,58 @@ blender --background --python tests/run_tests.py -- test_export
 
 # Import tests only
 blender --background --python tests/run_tests.py -- test_import
+
+# Unicode tests only
+blender --background --python tests/run_tests.py -- test_unicode
 ```
 
-## 📋 Test Modules
+## 📋 Test Coverage
 
-Tests are organized by functionality:
+### Unit Tests (`tests/unit/`) - 130 tests
+- **`test_export_unit.py`** - Export logic (materials, transforms, vertices, triangles)
+- **`test_import_unit.py`** - Import logic (parsing, content types, materials)
+- **`test_metadata.py`** - Metadata storage and retrieval
+- **`test_preferences.py`** - Addon preferences handling
 
-- **`test_smoke.py`** - Fast smoke tests (8 tests, <2s) - Basic sanity checks
-- **`test_export.py`** - Export functionality (17 tests) - Materials, transformations, archive structure
-- **`test_import.py`** - Import functionality (11 tests) - Import, roundtrips, API compatibility
-- **`test_unicode.py`** - Unicode character handling (20+ tests) - Chinese, Japanese, Korean, emoji support
+### Integration Tests (`tests/integration/`) - 55 tests
+- **`test_smoke.py`** - Fast sanity checks (8 tests)
+- **`test_export.py`** - Full export workflows (17 tests)
+- **`test_import.py`** - Import and roundtrips (11 tests)
+- **`test_unicode.py`** - Unicode handling (18 tests) - Chinese, Japanese, Korean, emoji
 
-**Total: 50+ integration tests** covering end-to-end workflows including Unicode support
+**Total: 185 tests**
 
-## 📁 Test Structure
+## 📁 Structure
 
 ```
 tests/
-├── conftest.py           # Pytest fixtures and configuration
-├── pytest.ini            # Pytest settings
-├── run_pytest.py         # Python test runner
-├── run_pytest.ps1        # PowerShell test runner
-├── run_pytest.sh         # Bash test runner
-├── test_smoke.py         # Fast smoke tests
-├── test_export.py        # Export functionality tests
-├── test_import.py        # Import functionality tests
-├── test_unicode.py       # Unicode character handling tests
+├── run_all_tests.py      # ⭐ Combined test runner (runs both suites)
+├── run_tests.py          # Integration test runner
+├── run_unit_tests.py     # Unit test runner
+├── README.md
+├── unit/                 # Unit tests
+│   ├── mock/             # Mock helpers
+│   │   └── bpy.py
+│   ├── test_export_unit.py
+│   ├── test_import_unit.py
+│   ├── test_metadata.py
+│   └── test_preferences.py
+├── integration/          # Integration tests
+│   ├── test_base.py      # Base test class
+│   ├── test_smoke.py
+│   ├── test_export.py
+│   ├── test_import.py
+│   └── test_unicode.py
 └── resources/            # Test data files
     ├── only_3dmodel_file.3mf
     ├── corrupt_archive.3mf
     └── empty_archive.zip
 ```
 
-## 🔧 Setup
-
-### Prerequisites
+## 🔧 Requirements
 
 1. **Blender 4.2+** installed
-2. **No external dependencies required** - uses only Python/Blender built-ins (unittest)
-
-## 📝 Writing Tests
-
-### Example Test
-
-```python
-import bpy
-from test_base import Blender3mfTestCase
-
-class MyTests(Blender3mfTestCase):
-    """Test suite for my feature."""
-    
-    def test_export_cube(self):
-        """Export a simple cube."""
-        bpy.ops.mesh.primitive_cube_add(location=(0, 0, 0))
-        
-        result = bpy.ops.export_mesh.threemf(filepath=str(self.temp_file))
-        
-        self.assertIn('FINISHED', result)
-        self.assertTrue(self.temp_file.exists())
-```
-
-### Available Base Class Features
-
-Inherit from `Blender3mfTestCase` to get:
-- **`self.temp_file`** - Unique temporary .3mf file path
-- **`self.test_resources_dir`** - Path to test data files  
-- **`self.clean_scene()`** - Reset scene to empty
-- **`self.create_red_material()`** - Create red Principled BSDF material
-- **`self.create_blue_material()`** - Create blue Principled BSDF material
-
-Scene is automatically cleaned before/after each test.
+2. **No external dependencies** - uses only Python/Blender built-ins (unittest)
 
 ## 🎯 Running Specific Tests
 

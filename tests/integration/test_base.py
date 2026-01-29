@@ -20,7 +20,8 @@ from pathlib import Path
 
 # Shared temporary directory for all tests
 _temp_test_dir = None
-_test_resources_dir = Path(__file__).parent / "resources"
+# Resources are in tests/resources (one level up from integration/)
+_test_resources_dir = Path(__file__).parent.parent / "resources"
 
 
 def get_temp_test_dir():

@@ -1,0 +1,71 @@
+"""
+Master test runner for Blender 3MF addon.
+
+Runs both unit tests and integration tests in separate Blender processes.
+
+Run with: blender --background --python tests/run_all_tests.py
+   Or directly: python tests/run_all_tests.py (will call blender)
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+TESTS_DIR = Path(__file__).parent
+PROJECT_ROOT = TESTS_DIR.parent
+
+
+def run_test_suite(script_name, suite_name):
+    """Run a test suite via blender and return success status."""
+    script_path = TESTS_DIR / script_name
+    
+    print(f"\n{'=' * 70}")
+    print(f"RUNNING {suite_name.upper()}")
+    print(f"{'=' * 70}\n")
+    
+    result = subprocess.run(
+        ["blender", "--background", "--python", str(script_path)],
+        cwd=str(PROJECT_ROOT)
+    )
+    
+    return result.returncode == 0
+
+
+def main():
+    """Run all test suites."""
+    print("=" * 70)
+    print("BLENDER 3MF ADDON - FULL TEST SUITE")
+    print("=" * 70)
+    
+    results = {}
+    
+    # Run unit tests
+    results["Unit Tests"] = run_test_suite("run_unit_tests.py", "Unit Tests")
+    
+    # Run integration tests
+    results["Integration Tests"] = run_test_suite("run_tests.py", "Integration Tests")
+    
+    # Print summary
+    print("\n" + "=" * 70)
+    print("FINAL SUMMARY")
+    print("=" * 70)
+    
+    all_passed = True
+    for name, passed in results.items():
+        status = "✅ PASSED" if passed else "❌ FAILED"
+        print(f"  {name}: {status}")
+        if not passed:
+            all_passed = False
+    
+    print("-" * 70)
+    if all_passed:
+        print("✅ ALL TEST SUITES PASSED")
+    else:
+        print("❌ SOME TEST SUITES FAILED")
+    print("=" * 70)
+    
+    return 0 if all_passed else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

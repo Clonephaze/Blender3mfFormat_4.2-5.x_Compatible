@@ -15,7 +15,7 @@ import json  # To get the ground truth of stored data from the annotations.
 import unittest.mock  # To mock away the Blender API.
 import xml.etree.ElementTree  # To create relationships documents.
 
-from .mock.bpy import MockOperator, MockExportHelper, MockImportHelper
+from mock.bpy import MockOperator, MockExportHelper, MockImportHelper
 
 # The import and export classes inherit from classes from the Blender API. These classes would be MagicMocks as well.
 # However their metaclasses are then also MagicMocks, but different instances of MagicMock.

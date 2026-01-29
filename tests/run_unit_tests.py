@@ -1,10 +1,10 @@
 """
-Test runner for Blender 3MF addon integration test suite.
+Test runner for Blender 3MF addon unit test suite.
 
-This script runs unittest tests inside Blender's Python environment.
-No external dependencies required - uses only Python/Blender built-ins.
+These tests run inside Blender's Python environment but mock specific
+behaviors for isolation and faster execution.
 
-Run with: blender --background --python tests/run_tests.py
+Run with: blender --background --python tests/run_unit_tests.py
 """
 
 import sys
@@ -15,14 +15,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Add tests directory to path
+# Add unit tests directory to path
 TESTS_DIR = Path(__file__).parent
-INTEGRATION_DIR = TESTS_DIR / "integration"
-sys.path.insert(0, str(TESTS_DIR))
-sys.path.insert(0, str(INTEGRATION_DIR))
-
-# Import test utilities
-from integration.test_base import cleanup_temp_dir
+UNIT_DIR = TESTS_DIR / "unit"
+sys.path.insert(0, str(UNIT_DIR))
 
 # Parse command line args for test filtering
 pattern = "test_*.py"
@@ -32,27 +28,24 @@ if len(sys.argv) > 1 and "--" in sys.argv:
         arg = sys.argv[idx + 1]
         pattern = arg if arg.endswith(".py") else arg + ".py"
 
-print(f"Discovering integration tests matching: {pattern}")
+print(f"Discovering unit tests matching: {pattern}")
 
 # Discover and run tests
 if __name__ == "__main__":
     # Create test suite
     loader = unittest.TestLoader()
-    suite = loader.discover(str(INTEGRATION_DIR), pattern=pattern)
+    suite = loader.discover(str(UNIT_DIR), pattern=pattern)
 
     # Run tests with verbose output
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
 
-    # Cleanup
-    cleanup_temp_dir()
-
     # Print summary
     print("\n" + "=" * 70)
     if result.wasSuccessful():
-        print(f"✅ ALL TESTS PASSED: {result.testsRun} tests")
+        print(f"✅ ALL UNIT TESTS PASSED: {result.testsRun} tests")
     else:
-        print("❌ TESTS FAILED")
+        print("❌ UNIT TESTS FAILED")
         print(f"   Ran: {result.testsRun}")
         print(f"   Failures: {len(result.failures)}")
         print(f"   Errors: {len(result.errors)}")
