@@ -9,7 +9,7 @@ maintainer = "Clonephaze"
 type = "add-on"
 
 website = "https://github.com/Clonephaze/3MF-Blender-Add-on---Maintained"
-tags = ["import-export"]
+tags = ["Import-Export"]
 blender_version_min = "4.2.0"
 license = ["SPDX:GPL-3.0-or-later"]
 copyright = ["2025 Clonephaze", "2020 Ghostkeeper"]
