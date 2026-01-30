@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "ThreeMF_io"
-version = "1.2.1"
+version = "1.2.2"
 name = "3MF Import/Export"
 tagline = "Import and export 3D Manufacturing Format (3MF) files"
 maintainer = "Clonephaze"
@@ -9,14 +9,10 @@ maintainer = "Clonephaze"
 type = "add-on"
 
 website = "https://github.com/Clonephaze/3MF-Blender-Add-on---Maintained"
+tags = ["import-export"]
 blender_version_min = "4.2.0"
-license = [
-  "SPDX:GPL-3.0-or-later",
-]
-copyright = [
-  "2025 Clonephaze",
-  "2020 Ghostkeeper",
-]
+license = ["SPDX:GPL-3.0-or-later"]
+copyright = ["2025 Clonephaze", "2020 Ghostkeeper"]
 
 [permissions]
 files = "For import and export of 3MF files"
