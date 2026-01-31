@@ -1,3 +1,27 @@
+1.2.3 — 3MF Core Specification v1.4.0 Compliance
+====
+Updated to target the latest 3MF Core Specification v1.4.0 (published February 6, 2025).
+
+Features
+----
+* **3MF Core Spec v1.4.0:** Updated to latest specification version
+* **Triangle Sets Extension:** Added namespace support for `t:trianglesets` (defined in Core Spec v1.3+)
+* **Framework Ready:** Infrastructure prepared for future Triangle Sets import/export features
+
+Changes
+----
+* Updated `SPEC_VERSION` constant from "1.3.0" to "1.4.0"
+* Added `TRIANGLE_SETS_NAMESPACE` constant for grouping triangles
+* No breaking changes — v1.4.0 primarily removed deprecated "mirror" functionality (which we never implemented) and added documentation clarifications
+
+---
+
+1.2.2 — PrusaSlicer Compatibility & Thumbnails
+====
+This extremely small patch simply adds a tag to the blender manifest.toml
+
+---
+
 1.2.1 — PrusaSlicer Compatibility & Thumbnails
 ====
 This patch adds PrusaSlicer multi-material import support and automatic thumbnail generation.

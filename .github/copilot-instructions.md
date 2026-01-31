@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Blender addon for importing/exporting 3MF files. Targets **3MF Core Spec v1.3.0** with Production Extension support for Orca Slicer/BambuStudio compatibility.
+Blender addon for importing/exporting 3MF files. Targets **3MF Core Spec v1.4.0** with Production Extension support for Orca Slicer/BambuStudio compatibility.
 
 ## Architecture
 

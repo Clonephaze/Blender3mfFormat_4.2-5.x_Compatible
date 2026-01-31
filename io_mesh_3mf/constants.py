@@ -34,6 +34,7 @@ __all__ = [
     "CORE_PROPERTIES_MIMETYPE",
     "MODEL_NAMESPACE",
     "SLIC3RPE_NAMESPACE",
+    "TRIANGLE_SETS_NAMESPACE",
     "MODEL_NAMESPACES",
     "MODEL_DEFAULT_UNIT",
     "MATERIAL_NAMESPACE",
@@ -50,19 +51,24 @@ __all__ = [
 ]
 
 # 3MF Core Specification version this addon targets.
-SPEC_VERSION: str = "1.3.0"
+# v1.4.0 (February 6, 2025): Removed deprecated mirror, clarified shapes/composition, document naming conventions.
+SPEC_VERSION: str = "1.4.0"
 
 # Set of namespaces for 3MF extensions that we support.
 # Materials extension is used for Orca Slicer color export.
 MATERIAL_NAMESPACE: str = "http://schemas.microsoft.com/3dmanufacturing/material/2015/02"
 # Production extension for multi-file structure (used by Orca/BambuStudio)
 PRODUCTION_NAMESPACE: str = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
+# Triangle Sets extension (introduced in Core Spec v1.3.0)
+# Used for grouping triangles for selection workflows and property assignment.
+TRIANGLE_SETS_NAMESPACE: str = "http://schemas.microsoft.com/3dmanufacturing/trianglesets/2021/07"
 # BambuStudio/Orca vendor namespace
 BAMBU_NAMESPACE: str = "http://schemas.bambulab.com/package/2021"
 
 SUPPORTED_EXTENSIONS: Set[str] = {
     MATERIAL_NAMESPACE,  # Materials and colors extension
     PRODUCTION_NAMESPACE,  # Production extension (multi-file)
+    TRIANGLE_SETS_NAMESPACE,  # Triangle sets (groups of triangles) - read support
 }
 
 # File contents to use when files must be preserved but there's a file with different content in a previous archive.
@@ -90,7 +96,8 @@ MODEL_NAMESPACE: str = "http://schemas.microsoft.com/3dmanufacturing/core/2015/0
 SLIC3RPE_NAMESPACE: str = "http://schemas.slic3r.org/3mf/2017/06"  # PrusaSlicer/Slic3r vendor extension
 MODEL_NAMESPACES: Dict[str, str] = {
     "3mf": MODEL_NAMESPACE,
-    "slic3rpe": SLIC3RPE_NAMESPACE
+    "slic3rpe": SLIC3RPE_NAMESPACE,
+    "t": TRIANGLE_SETS_NAMESPACE,  # Triangle sets extension (Core Spec v1.3+)
 }
 MODEL_DEFAULT_UNIT: str = "millimeter"  # If the unit is missing, it will be this.
 
