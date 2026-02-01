@@ -206,6 +206,9 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         :param context: The Blender context.
         :return: A set of status flags to indicate whether the operation succeeded or not.
         """
+        # Show progress message
+        self.report({'INFO'}, "Importing, please wait...")
+        
         # Reset state.
         self.resource_objects = {}
         self.resource_materials = {}
@@ -336,8 +339,9 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                 self.resource_materials = {}
                 self.orca_filament_colors = {}  # Maps filament index -> hex color
 
-                # Try to read Orca filament colors from project_settings.config
-                self.read_orca_filament_colors(path)
+                # Try to read filament colors from metadata
+                self.read_orca_filament_colors(path)  # Orca project_settings.config
+                self.read_prusa_filament_colors(path)  # Blender's PrusaSlicer metadata
 
                 scene_metadata = self.read_metadata(root, scene_metadata)
                 self.read_materials(root)
@@ -1371,16 +1375,70 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         except (zipfile.BadZipFile, IOError) as e:
             log.debug(f"Could not read Orca config from {archive_path}: {e}")
 
+    def read_prusa_filament_colors(self, archive_path: str) -> None:
+        """
+        Read filament colors from Blender's PrusaSlicer MMU export metadata.
+
+        This reads from Metadata/blender_filament_colors.txt which maps paint codes to hex colors.
+        Format: paint_code=hex_color (one per line)
+
+        :param archive_path: Path to the 3MF archive file.
+        """
+        if not self.import_materials:
+            return
+
+        try:
+            with zipfile.ZipFile(archive_path, 'r') as archive:
+                metadata_path = "Metadata/blender_filament_colors.txt"
+                if metadata_path not in archive.namelist():
+                    log.debug(f"No {metadata_path} in archive, skipping Prusa color import")
+                    return
+
+                with archive.open(metadata_path) as metadata_file:
+                    content = metadata_file.read().decode('UTF-8')
+                    
+                    # Parse paint_code=hex_color lines
+                    for line in content.strip().split('\n'):
+                        if '=' in line:
+                            paint_code, hex_color = line.strip().split('=', 1)
+                            # Convert paint code to filament index
+                            filament_index = parse_paint_color_to_index(paint_code)
+                            if filament_index > 0:
+                                # Store as 0-indexed (filament 1 -> index 0)
+                                array_index = filament_index - 1
+                                self.orca_filament_colors[array_index] = hex_color
+                    
+                    log.info(f"Loaded {len(self.orca_filament_colors)} Prusa filament colors from metadata")
+                    self.safe_report({'INFO'}, f"Loaded {len(self.orca_filament_colors)} PrusaSlicer filament colors")
+
+        except (zipfile.BadZipFile, IOError) as e:
+            log.debug(f"Could not read Prusa filament colors from {archive_path}: {e}")
+
+    def srgb_to_linear(self, value: float) -> float:
+        """
+        Convert sRGB color component to linear color space.
+        Blender materials use linear color space internally.
+        
+        :param value: sRGB value (0.0-1.0)
+        :return: Linear value (0.0-1.0)
+        """
+        if value <= 0.04045:
+            return value / 12.92
+        else:
+            return pow((value + 0.055) / 1.055, 2.4)
+
     def parse_hex_color(self, hex_color: str) -> Tuple[float, float, float, float]:
         """
-        Parse a hex color string to RGBA tuple.
+        Parse a hex color string to RGBA tuple in linear color space.
+        Hex colors are sRGB, but Blender materials expect linear.
 
         :param hex_color: Hex color string like "#FF0000" or "FF0000"
-        :return: RGBA tuple with values 0.0-1.0
+        :return: RGBA tuple with values 0.0-1.0 in linear color space
         """
         hex_color = hex_color.lstrip('#')
         try:
             if len(hex_color) == 6:  # RGB
+                # Direct conversion - Blender will handle the color space
                 r = int(hex_color[0:2], 16) / 255.0
                 g = int(hex_color[2:4], 16) / 255.0
                 b = int(hex_color[4:6], 16) / 255.0

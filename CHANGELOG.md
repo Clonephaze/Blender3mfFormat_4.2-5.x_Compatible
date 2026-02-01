@@ -1,3 +1,19 @@
+1.2.4 — PrusaSlicer MMU Export & Color Preservation
+====
+Full round-trip color support for PrusaSlicer MMU workflows and improved user feedback.
+
+Features
+----
+* **PrusaSlicer MMU Export:** Face colors exported with `slic3rpe:mmu_segmentation` attributes and color metadata for perfect round-trips
+* **Progress Messages:** Status feedback during import/export operations
+* **Color Fidelity:** Fixed color space handling for accurate material preservation across all formats
+
+Improvements
+----
+* Refactored export code following DRY principles (extracted helper methods, merged duplicate code)
+
+---
+
 1.2.3 — 3MF Core Specification v1.4.0 Compliance
 ====
 Updated to target the latest 3MF Core Specification v1.4.0 (published February 6, 2025).

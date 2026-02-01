@@ -36,7 +36,7 @@ For Blender versions **2.80–3.6**, use the [original repository releases](http
 | Slicer | Round-Trip Support | Notes |
 |--------|-------------------|-------|
 | **Orca Slicer / BambuStudio** | ✅ Full | Multi-color zones, materials, and metadata preserved |
-| **PrusaSlicer** | 🔶 Partial | Color zones preserved (colors may differ due to filament profile differences) |
+| **PrusaSlicer** | ✅ Full | Multi-material zones and colors fully preserved with MMU export format |
 | **Standard 3MF** | ✅ Full | Geometry, materials, and metadata |
 
 ---
@@ -87,7 +87,20 @@ After installation, the following menu entries are available:
 - **Apply Modifiers**
 - **Coordinate Precision**
 - **Export Hidden Objects**
-- **Orca Slicer Color Zones**: Export face colors as Orca Slicer filament zones (vendor-specific)
+- **Multi-Material Format**: Choose between Standard 3MF, Orca Slicer, or PrusaSlicer MMU export formats
+  - **Orca Slicer**: Production Extension with paint_color attributes
+  - **PrusaSlicer**: slic3rpe:mmu_segmentation attributes with color metadata for perfect round-trips
+
+---
+
+## Development & Contributing
+
+For detailed feature status, upcoming improvements, and contribution opportunities, see the **[Development Roadmap](ROADMAP.md)**.
+
+Key areas:
+- **Completed**: PrusaSlicer MMU export, Orca Slicer compatibility, automatic thumbnails
+- **In Progress**: Triangle Sets Extension, texture support
+- **Help Wanted**: Testing with different slicers, documenting vendor formats
 
 ---
 
@@ -141,15 +154,17 @@ This add-on includes special support for **Orca Slicer** and **BambuStudio** mul
 - Creates proper OPC relationships for slicer compatibility
 - Embeds viewport thumbnail for file preview
 
-**Round-trip Workflow:**
-1. Create a mesh in Blender with multiple materials (different colors per face)
-2. Export with "Orca Slicer Color Zones" enabled
-3. Open in Orca Slicer - colors appear as filament zones
-4. Re-import into Blender - materials are preserved
+**Automatically loads filament colors from metadata for accurate material recreation
+- Compatible with files exported from both Blender and PrusaSlicer
+
+**Export (PrusaSlicer MMU Format):**
+- Exports face colors with `slic3rpe:mmu_segmentation` attributes
+- Stores actual RGB colors in `Metadata/blender_filament_colors.txt`
+- Perfect round-trip: Blender → PrusaSlicer → Blender maintains exact colors
+- Compatible with PrusaSlicer's multi-material painting tools
 
 > **NOTE**  
-> The Orca color zone export uses vendor-specific attributes (`paint_color`) that are not part of the official 3MF specification. Standard 3MF consumers will still read the geometry correctly but may not display colors.
-
+> Previous versions could not preserve colors on round-trip. Version 1.2.4+ now includes color metadata export, enabling full-fidelity workflows between Blender and PrusaSlicer MMU painting
 #### PrusaSlicer Compatibility
 
 **Import:**

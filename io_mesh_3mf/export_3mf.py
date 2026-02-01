@@ -118,6 +118,16 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                     "Compatible with multi-material printing workflows",
         default=False,
     )
+    
+    mmu_slicer_format: bpy.props.EnumProperty(
+        name="Slicer Format",
+        description="Target slicer format for multi-material export",
+        items=[
+            ('ORCA', "Orca Slicer / BambuStudio", "Use Production Extension with paint_color attributes (Orca Slicer, BambuStudio, Handy)"),
+            ('PRUSA', "PrusaSlicer / SuperSlicer", "Use mmu_segmentation attributes (PrusaSlicer, SuperSlicer)"),
+        ],
+        default='ORCA',
+    )
 
     def invoke(self, context, event):
         """Initialize properties from preferences when the export dialog is opened."""
@@ -144,6 +154,11 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         orca_row = orca_box.row()
         orca_row.prop(self, "use_orca_format")
         if self.use_orca_format:
+            # Slicer format dropdown
+            format_row = orca_box.row()
+            format_row.prop(self, "mmu_slicer_format", text="Slicer")
+            
+            # Tips
             info_col = orca_box.column(align=True)
             info_col.scale_y = 0.7
             info_col.label(text="Tip: Assign different materials to faces in Edit Mode", icon='INFO')
@@ -169,14 +184,33 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             self.report(level, message)
         # If report is not available, the message has already been logged via the log module
 
+    def _finalize_export(self, archive: zipfile.ZipFile, format_name: str = "") -> Set[str]:
+        """
+        Finalize an export by closing the archive and reporting results.
+        
+        :param archive: The 3MF archive to close.
+        :param format_name: Optional format suffix for log message (e.g., "Orca-compatible ", "PrusaSlicer-compatible ").
+        :return: {"FINISHED"} on success, {"CANCELLED"} on failure.
+        """
+        try:
+            archive.close()
+        except EnvironmentError as e:
+            log.error(f"Unable to complete writing to 3MF archive: {e}")
+            self.safe_report({'ERROR'}, f"Unable to complete writing to 3MF archive: {e}")
+            return {"CANCELLED"}
+
+        log.info(f"Exported {self.num_written} objects to {format_name}3MF archive {self.filepath}.")
+        self.safe_report({'INFO'}, f"Exported {self.num_written} objects to {self.filepath}")
+        return {"FINISHED"}
+
     def attr(self, name: str) -> str:
         """
         Get attribute name, optionally with namespace prefix.
 
-        In Orca mode, attributes should not have namespace prefixes.
+        In Orca/PrusaSlicer mode, attributes should not have namespace prefixes.
         In standard 3MF mode with default_namespace, they need the prefix.
         """
-        if self.use_orca_format:
+        if self.use_orca_format or self.mmu_slicer_format == 'PRUSA':
             return name
         return f"{{{MODEL_NAMESPACE}}}{name}"
 
@@ -188,6 +222,9 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         :param context: The Blender context.
         :return: A set of status flags to indicate whether the write succeeded or not.
         """
+        # Show progress message
+        self.report({'INFO'}, "Exporting, please wait...")
+        
         # Reset state.
         self.next_resource_id = 1  # Starts counting at 1 for some inscrutable reason.
         self.material_resource_id = -1
@@ -209,9 +246,12 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
 
         global_scale = self.unit_scale(context)
 
-        # Orca Slicer mode uses Production Extension with separate model files
+        # Multi-material export uses different formats
         if self.use_orca_format:
-            return self.execute_orca_export(context, archive, blender_objects, global_scale)
+            if self.mmu_slicer_format == 'ORCA':
+                return self.execute_orca_export(context, archive, blender_objects, global_scale)
+            elif self.mmu_slicer_format == 'PRUSA':
+                return self.execute_prusa_export(context, archive, blender_objects, global_scale)
 
         # Standard 3MF export (original behavior)
         return self.execute_standard_export(context, archive, blender_objects, global_scale)
@@ -260,16 +300,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         # Write thumbnail if available from .blend file
         self.write_thumbnail(archive)
 
-        try:
-            archive.close()
-        except EnvironmentError as e:
-            log.error(f"Unable to complete writing to 3MF archive: {e}")
-            self.safe_report({'ERROR'}, f"Unable to complete writing to 3MF archive: {e}")
-            return {"CANCELLED"}
-
-        log.info(f"Exported {self.num_written} objects to 3MF archive {self.filepath}.")
-        self.safe_report({'INFO'}, f"Exported {self.num_written} objects to {self.filepath}")
-        return {"FINISHED"}
+        return self._finalize_export(archive)
 
     def execute_orca_export(self, context: bpy.types.Context, archive: zipfile.ZipFile,
                             blender_objects, global_scale: float) -> Set[str]:
@@ -372,16 +403,80 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         # Write thumbnail if available from .blend file
         self.write_thumbnail(archive)
 
-        try:
-            archive.close()
-        except EnvironmentError as e:
-            log.error(f"Unable to complete writing to 3MF archive: {e}")
-            self.safe_report({'ERROR'}, f"Unable to complete writing to 3MF archive: {e}")
-            return {"CANCELLED"}
+        return self._finalize_export(archive, "Orca-compatible ")
 
-        log.info(f"Exported {self.num_written} objects to Orca-compatible 3MF archive {self.filepath}.")
-        self.safe_report({'INFO'}, f"Exported {self.num_written} objects to {self.filepath}")
-        return {"FINISHED"}
+    def execute_prusa_export(self, context: bpy.types.Context, archive: zipfile.ZipFile,
+                            blender_objects, global_scale: float) -> Set[str]:
+        """
+        PrusaSlicer export with mmu_segmentation attributes.
+
+        Uses single model file with slic3rpe:mmu_segmentation on painted triangles.
+        """
+        # Register namespaces - empty string for default namespace
+        xml.etree.ElementTree.register_namespace("", MODEL_NAMESPACE)
+        xml.etree.ElementTree.register_namespace("slic3rpe", "http://schemas.slic3r.org/3mf/2017/06")
+        
+        # Collect face colors
+        self.safe_report({'INFO'}, "Collecting face colors for PrusaSlicer export...")
+        self.vertex_colors = self.collect_face_colors(blender_objects)
+        log.info(f"PrusaSlicer mode enabled with {len(self.vertex_colors)} color zones")
+
+        if len(self.vertex_colors) == 0:
+            log.warning("No face colors found! Assign materials to faces for color zones.")
+            self.safe_report({'WARNING'},
+                             "No face colors detected. Assign different materials to faces in Edit mode.")
+        else:
+            self.safe_report({'INFO'}, f"Detected {len(self.vertex_colors)} color zones for PrusaSlicer export")
+
+        # Create model root element - attributes must be namespace-qualified when using default_namespace
+        root = xml.etree.ElementTree.Element(
+            f"{{{MODEL_NAMESPACE}}}model"
+        )
+        
+        # Add attributes after creation to avoid namespace qualification issues
+        root.set("unit", "millimeter")
+        root.set("{http://www.w3.org/XML/1998/namespace}lang", "en-US")
+        
+        # Add PrusaSlicer metadata
+        metadata_version = xml.etree.ElementTree.SubElement(root, f"{{{MODEL_NAMESPACE}}}metadata", attrib={"name": "slic3rpe:Version3mf"})
+        metadata_version.text = "1"
+        metadata_painting = xml.etree.ElementTree.SubElement(root, f"{{{MODEL_NAMESPACE}}}metadata", attrib={"name": "slic3rpe:MmPaintingVersion"})
+        metadata_painting.text = "1"
+        
+        # Add scene metadata
+        scene_metadata = Metadata()
+        scene_metadata.retrieve(bpy.context.scene)
+        self.write_metadata(root, scene_metadata)
+
+        resources_element = xml.etree.ElementTree.SubElement(
+            root, f"{{{MODEL_NAMESPACE}}}resources"
+        )
+
+        # PrusaSlicer MMU painting doesn't use basematerials - only mmu_segmentation attributes
+        # Initialize empty material mapping to prevent errors in write_object_resource
+        self.material_name_to_index = {}
+
+        # Write objects - mmu_segmentation attributes are handled in write_triangles()
+        self.write_objects(root, resources_element, blender_objects, global_scale)
+        
+        # Write filament colors to metadata for round-trip import
+        self.write_prusa_filament_colors(archive)
+
+        document = xml.etree.ElementTree.ElementTree(root)
+        with archive.open(MODEL_LOCATION, "w", force_zip64=True) as f:
+            document.write(
+                f,
+                xml_declaration=True,
+                encoding="UTF-8",
+            )
+
+        # Write OPC Core Properties
+        self.write_core_properties(archive)
+
+        # Write thumbnail
+        self.write_thumbnail(archive)
+
+        return self._finalize_export(archive, "PrusaSlicer-compatible ")
 
     def write_orca_object_model(self, archive: zipfile.ZipFile, blender_object: bpy.types.Object,
                                 object_path: str, mesh_id: int, mesh_uuid: str) -> None:
@@ -709,6 +804,37 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             log.info("Wrote OPC Core Properties to docProps/core.xml")
         except Exception as e:
             log.error(f"Failed to write Core Properties: {e}")
+
+    def write_prusa_filament_colors(self, archive: zipfile.ZipFile) -> None:
+        """
+        Write filament color mapping for PrusaSlicer MMU export.
+        
+        Stores colors in Metadata/blender_filament_colors.txt for round-trip import.
+        Format: paint_code=hex_color (one per line)
+        """
+        if not self.vertex_colors:
+            return
+            
+        try:
+            # Sort by colorgroup index to maintain order
+            sorted_colors = sorted(self.vertex_colors.items(), key=lambda x: x[1])
+            
+            # Build color map: colorgroup_id -> hex_color
+            color_lines = []
+            for hex_color, colorgroup_id in sorted_colors:
+                # Map colorgroup_id to paint code
+                if colorgroup_id < len(ORCA_FILAMENT_CODES):
+                    paint_code = ORCA_FILAMENT_CODES[colorgroup_id]
+                    if paint_code:  # Skip empty (default)
+                        color_lines.append(f"{paint_code}={hex_color}")
+            
+            if color_lines:
+                color_data = "\n".join(color_lines)
+                with archive.open("Metadata/blender_filament_colors.txt", "w") as f:
+                    f.write(color_data.encode('UTF-8'))
+                log.info(f"Wrote {len(color_lines)} filament colors to metadata")
+        except Exception as e:
+            log.warning(f"Failed to write filament colors: {e}")
 
     def write_thumbnail(self, archive: zipfile.ZipFile) -> None:
         """
@@ -1187,30 +1313,10 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                         log.warning(f"Material slot {mat_idx} is empty")
                         continue
 
-                    # Try Principled BSDF first for materials with node setup
-                    color = None
-                    if material.use_nodes and material.node_tree:
-                        principled = bpy_extras.node_shader_utils.PrincipledBSDFWrapper(
-                            material, is_readonly=True
-                        )
-                        base_color = principled.base_color
-                        # Check if it's not the default gray (0.8, 0.8, 0.8)
-                        if (base_color and not (abs(base_color[0] - 0.8) < 0.01
-                                                and abs(base_color[1] - 0.8) < 0.01
-                                                and abs(base_color[2] - 0.8) < 0.01)):
-                            color = base_color
-
-                    # Fall back to diffuse_color for simple materials
-                    if color is None:
-                        color = material.diffuse_color[:3]
-                        log.info(f"Using diffuse_color for material '{material.name}': {color}")
-
-                    red = min(255, round(color[0] * 255))
-                    green = min(255, round(color[1] * 255))
-                    blue = min(255, round(color[2] * 255))
-                    color_hex = "#%0.2X%0.2X%0.2X" % (red, green, blue)
-                    unique_colors.add(color_hex)
-                    log.info(f"Face color: {color_hex} from material '{material.name}'")
+                    color_hex = self._material_to_hex_color(material)
+                    if color_hex:
+                        unique_colors.add(color_hex)
+                        log.info(f"Face color: {color_hex} from material '{material.name}'")
 
             # Clean up the temporary mesh
             eval_object.to_mesh_clear()
@@ -1234,6 +1340,57 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
 
         return color_to_index
 
+    def _linear_to_srgb(self, value: float) -> float:
+        """
+        Convert linear color component to sRGB color space.
+        Blender materials use linear color space, but 3MF hex colors are sRGB.
+        
+        :param value: Linear value (0.0-1.0)
+        :return: sRGB value (0.0-1.0)
+        """
+        if value <= 0.0031308:
+            return value * 12.92
+        else:
+            return 1.055 * pow(value, 1.0 / 2.4) - 0.055
+
+    def _material_to_hex_color(self, material: bpy.types.Material) -> Optional[str]:
+        """
+        Extract hex color string from a Blender material.
+        
+        Tries Principled BSDF first (for node-based materials), falls back to diffuse_color.
+        Skips default gray (0.8, 0.8, 0.8) from Principled BSDF.
+        Converts from linear (Blender) to sRGB (3MF hex) color space.
+        
+        :param material: The Blender material to extract color from.
+        :return: Hex color string like "#RRGGBB" or None if no material.
+        """
+        if material is None:
+            return None
+            
+        color = None
+        
+        # Try Principled BSDF first for materials with node setup
+        if material.use_nodes and material.node_tree:
+            principled = bpy_extras.node_shader_utils.PrincipledBSDFWrapper(
+                material, is_readonly=True
+            )
+            base_color = principled.base_color
+            # Check if it's not the default gray (0.8, 0.8, 0.8)
+            if (base_color and not (abs(base_color[0] - 0.8) < 0.01
+                                    and abs(base_color[1] - 0.8) < 0.01
+                                    and abs(base_color[2] - 0.8) < 0.01)):
+                color = base_color
+
+        # Fall back to diffuse_color for simple materials
+        if color is None:
+            color = material.diffuse_color[:3]
+
+        # Blender's diffuse_color is already in sRGB display space - no conversion needed
+        red = min(255, round(color[0] * 255))
+        green = min(255, round(color[1] * 255))
+        blue = min(255, round(color[2] * 255))
+        return "#%0.2X%0.2X%0.2X" % (red, green, blue)
+
     def get_triangle_color(self, mesh: bpy.types.Mesh, triangle: bpy.types.MeshLoopTriangle,
                            blender_object: bpy.types.Object) -> Optional[str]:
         """
@@ -1244,32 +1401,9 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         :param blender_object: The object the mesh belongs to.
         :return: Hex color string like "#RRGGBB" or None if no color.
         """
-        # Get color from the face's assigned material
         if triangle.material_index < len(blender_object.material_slots):
             material = blender_object.material_slots[triangle.material_index].material
-            if material is not None:
-                # Try Principled BSDF first for materials with node setup
-                color = None
-                if material.use_nodes and material.node_tree:
-                    principled = bpy_extras.node_shader_utils.PrincipledBSDFWrapper(
-                        material, is_readonly=True
-                    )
-                    base_color = principled.base_color
-                    # Check if it's not the default gray (0.8, 0.8, 0.8)
-                    if (base_color and not (abs(base_color[0] - 0.8) < 0.01
-                                            and abs(base_color[1] - 0.8) < 0.01
-                                            and abs(base_color[2] - 0.8) < 0.01)):
-                        color = base_color
-
-                # Fall back to diffuse_color for simple materials
-                if color is None:
-                    color = material.diffuse_color[:3]
-
-                red = min(255, round(color[0] * 255))
-                green = min(255, round(color[1] * 255))
-                blue = min(255, round(color[2] * 255))
-                return "#%0.2X%0.2X%0.2X" % (red, green, blue)
-
+            return self._material_to_hex_color(material)
         return None
 
     def write_objects(self, root: xml.etree.ElementTree.Element,
@@ -1457,7 +1591,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                      f"{len(blender_object.material_slots)} material slots")
 
             # In Orca mode, use face colors mapped to colorgroup IDs
-            if self.use_orca_format and self.vertex_colors:
+            if self.use_orca_format and self.vertex_colors and self.mmu_slicer_format == 'ORCA':
                 # Find the most common color for this object
                 color_counts = {}
                 for triangle in mesh.loop_triangles:
@@ -1478,35 +1612,37 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                     object_element.attrib[self.attr("pindex")] = "0"
                     most_common_material_list_index = colorgroup_id  # For triangle overrides
             else:
-                # Normal material handling
-                material_indices = [
-                    triangle.material_index for triangle in mesh.loop_triangles
-                ]
+                # Normal material handling (not in Orca or PrusaSlicer mode)
+                # PrusaSlicer mode doesn't use basematerials, so skip this
+                if self.material_name_to_index:
+                    material_indices = [
+                        triangle.material_index for triangle in mesh.loop_triangles
+                    ]
 
-                if material_indices and blender_object.material_slots:
-                    counter = collections.Counter(material_indices)
-                    # most_common_material_object_index is an index from the MeshLoopTriangle, referring to the list of
-                    # materials attached to the Blender object.
-                    most_common_material_object_index = counter.most_common(1)[0][0]
-                    most_common_material = blender_object.material_slots[
-                        most_common_material_object_index
-                    ].material
+                    if material_indices and blender_object.material_slots:
+                        counter = collections.Counter(material_indices)
+                        # most_common_material_object_index is an index from the MeshLoopTriangle, referring to the list of
+                        # materials attached to the Blender object.
+                        most_common_material_object_index = counter.most_common(1)[0][0]
+                        most_common_material = blender_object.material_slots[
+                            most_common_material_object_index
+                        ].material
 
-                    # Only proceed if the most common material slot is not empty
-                    if most_common_material is not None:
-                        # most_common_material_list_index is an index referring to our
-                        # own list of materials that we put in the resources.
-                        most_common_material_list_index = self.material_name_to_index[
-                            most_common_material.name
-                        ]
-                        # We always only write one group of materials.
-                        # The resource ID was determined when it was written.
-                        object_element.attrib[self.attr("pid")] = str(
-                            self.material_resource_id
-                        )
-                        object_element.attrib[self.attr("pindex")] = str(
-                            most_common_material_list_index
-                        )
+                        # Only proceed if the most common material slot is not empty
+                        if most_common_material is not None:
+                            # most_common_material_list_index is an index referring to our
+                            # own list of materials that we put in the resources.
+                            most_common_material_list_index = self.material_name_to_index[
+                                most_common_material.name
+                            ]
+                            # We always only write one group of materials.
+                            # The resource ID was determined when it was written.
+                            object_element.attrib[self.attr("pid")] = str(
+                                self.material_resource_id
+                            )
+                            object_element.attrib[self.attr("pindex")] = str(
+                                most_common_material_list_index
+                            )
 
             self.write_vertices(mesh_element, mesh.vertices)
             self.write_triangles(
@@ -1664,22 +1800,30 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             triangle_element.attrib[v2_name] = str(triangle.vertices[1])
             triangle_element.attrib[v3_name] = str(triangle.vertices[2])
 
-            # Handle Orca color zones if enabled
+            # Handle multi-material color zones based on format
             if self.use_orca_format and self.vertex_colors and mesh and blender_object:
                 triangle_color = self.get_triangle_color(mesh, triangle, blender_object)
                 if triangle_color and triangle_color in self.vertex_colors:
                     colorgroup_id = self.vertex_colors[triangle_color]
-                    # pid references the colorgroup ID, p1 is 0 (first color in group)
-                    triangle_element.attrib[pid_name] = str(colorgroup_id)
-                    triangle_element.attrib[p1_name] = "0"
+                    
+                    if self.mmu_slicer_format == 'PRUSA':
+                        # PrusaSlicer format: use mmu_segmentation attribute with Orca paint codes
+                        # PrusaSlicer uses the same paint code system as Orca Slicer
+                        if colorgroup_id < len(ORCA_FILAMENT_CODES):
+                            paint_code = ORCA_FILAMENT_CODES[colorgroup_id]
+                            if paint_code:  # Only write if not default extruder (empty string = extruder 0)
+                                # Use slic3rpe namespace for the attribute
+                                triangle_element.attrib["{http://schemas.slic3r.org/3mf/2017/06}mmu_segmentation"] = paint_code
+                    else:
+                        # Orca format: use pid/p1 + paint_color
+                        triangle_element.attrib[pid_name] = str(colorgroup_id)
+                        triangle_element.attrib[p1_name] = "0"
 
-                    # Add paint_color attribute for Orca's per-triangle coloring
-                    # This is the MMU segmentation data that Orca uses for visual display
-                    # The colorgroup_id is 1-based, matching ORCA_FILAMENT_CODES indices
-                    if colorgroup_id < len(ORCA_FILAMENT_CODES):
-                        paint_code = ORCA_FILAMENT_CODES[colorgroup_id]
-                        if paint_code:  # Don't add empty paint_color
-                            triangle_element.attrib["paint_color"] = paint_code
+                        # Add paint_color attribute for Orca's per-triangle coloring
+                        if colorgroup_id < len(ORCA_FILAMENT_CODES):
+                            paint_code = ORCA_FILAMENT_CODES[colorgroup_id]
+                            if paint_code:  # Don't add empty paint_color
+                                triangle_element.attrib["paint_color"] = paint_code
             elif triangle.material_index < len(material_slots):
                 # Normal material handling (only if not in Orca mode)
                 # Check if the material slot is not empty
