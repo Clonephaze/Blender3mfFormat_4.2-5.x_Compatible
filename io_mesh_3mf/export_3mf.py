@@ -246,31 +246,28 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             if mesh is None:
                 continue
 
-            # Check for non-manifold geometry
+            # Check for non-manifold geometry using edge_keys for O(n) performance
             # An edge is non-manifold if it's used by more than 2 faces or only 1 face
             has_non_manifold = False
 
-            for edge in mesh.edges:
-                # Count how many faces use this edge
-                face_count = 0
-                for poly in mesh.polygons:
-                    edge_keys = poly.edge_keys
-                    if (edge.vertices[0], edge.vertices[1]) in edge_keys or \
-                       (edge.vertices[1], edge.vertices[0]) in edge_keys:
-                        face_count += 1
+            # Count edge usage across all polygons - O(faces) instead of O(edges × faces)
+            edge_face_count = collections.Counter()
+            for poly in mesh.polygons:
+                for edge_key in poly.edge_keys:
+                    edge_face_count[edge_key] += 1
 
-                # Non-manifold if used by 0, 1, or 3+ faces
-                if face_count != 2:
+            # Check if any edge is used by != 2 faces
+            for count in edge_face_count.values():
+                if count != 2:
                     has_non_manifold = True
                     break
 
-            # Check for loose vertices (not part of any edge)
-            if not has_non_manifold:
-                vertex_used = [False] * len(mesh.vertices)
-                for edge in mesh.edges:
-                    vertex_used[edge.vertices[0]] = True
-                    vertex_used[edge.vertices[1]] = True
-                if not all(vertex_used):
+            # Check for loose vertices (not part of any face)
+            if not has_non_manifold and len(mesh.vertices) > 0:
+                vertices_in_faces = set()
+                for poly in mesh.polygons:
+                    vertices_in_faces.update(poly.vertices)
+                if len(vertices_in_faces) < len(mesh.vertices):
                     has_non_manifold = True
 
             eval_object.to_mesh_clear()

@@ -46,7 +46,6 @@ from .constants import (
 )
 from .extensions import (
     ExtensionManager,
-    PRODUCTION_EXTENSION,
     get_extension_by_namespace,
 )
 from .metadata import Metadata, MetadataEntry  # To store and serialize metadata.
@@ -1126,9 +1125,6 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         :return: List of components in this object node.
         """
         result = []
-
-        # Combined namespaces for both core 3MF and Production Extension
-        combined_ns = {**MODEL_NAMESPACES, **PRODUCTION_NAMESPACES}
 
         for component_node in object_node.iterfind(
             "./3mf:components/3mf:component", MODEL_NAMESPACES
