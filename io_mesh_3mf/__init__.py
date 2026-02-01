@@ -89,6 +89,30 @@ class ThreeMFPreferences(bpy.types.AddonPreferences):
         default=True,
     )
 
+    default_reuse_materials: bpy.props.BoolProperty(
+        name="Reuse Existing Materials",
+        description="Match and reuse existing Blender materials by name and color instead of always creating new ones. "
+                    "Prevents material duplication when re-importing edited files",
+        default=True,
+    )
+
+    default_import_location: bpy.props.EnumProperty(
+        name="Import Location",
+        description="Default location for imported objects",
+        items=[
+            ('ORIGIN', 'World Origin', 'Place at world origin'),
+            ('CURSOR', '3D Cursor', 'Place at 3D cursor'),
+            ('KEEP', 'Keep Original', 'Keep positions from file'),
+        ],
+        default='KEEP',
+    )
+
+    default_origin_to_geometry: bpy.props.BoolProperty(
+        name="Origin to Geometry",
+        description="Set object origin to center of geometry after import by default",
+        default=False,
+    )
+
     default_multi_material_export: bpy.props.BoolProperty(
         name="Multi-Material Color Zones",
         description="Export per-face materials as multi-material filament zones by default. "
@@ -122,7 +146,13 @@ class ThreeMFPreferences(bpy.types.AddonPreferences):
         # Import behavior section
         import_box = layout.box()
         import_box.label(text="Import Behavior", icon='IMPORT')
-        import_box.prop(self, "default_import_materials", icon='MATERIAL')
+        col = import_box.column(align=True)
+        col.prop(self, "default_import_materials", icon='MATERIAL')
+        col.prop(self, "default_reuse_materials", icon='LINKED')
+        col.separator()
+        col.label(text="Placement:", icon='OBJECT_ORIGIN')
+        col.prop(self, "default_import_location")
+        col.prop(self, "default_origin_to_geometry")
 
 
 def menu_import(self, _) -> None:

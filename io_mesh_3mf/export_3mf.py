@@ -216,6 +216,70 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             return name
         return f"{{{MODEL_NAMESPACE}}}{name}"
 
+    def check_non_manifold_geometry(self, blender_objects: List[bpy.types.Object]) -> List[str]:
+        """
+        Check all mesh objects for non-manifold geometry.
+
+        Non-manifold geometry can cause problems in slicers and is generally
+        not suitable for 3D printing.
+        :param blender_objects: List of Blender objects to check.
+        :return: List of object names with non-manifold geometry.
+        """
+        non_manifold_objects = []
+
+        for blender_object in blender_objects:
+            if blender_object.type != 'MESH':
+                continue
+
+            # Get mesh data with modifiers applied if needed
+            if self.use_mesh_modifiers:
+                dependency_graph = bpy.context.evaluated_depsgraph_get()
+                eval_object = blender_object.evaluated_get(dependency_graph)
+            else:
+                eval_object = blender_object
+
+            try:
+                mesh = eval_object.to_mesh()
+            except RuntimeError:
+                continue
+
+            if mesh is None:
+                continue
+
+            # Check for non-manifold geometry
+            # An edge is non-manifold if it's used by more than 2 faces or only 1 face
+            has_non_manifold = False
+
+            for edge in mesh.edges:
+                # Count how many faces use this edge
+                face_count = 0
+                for poly in mesh.polygons:
+                    edge_keys = poly.edge_keys
+                    if (edge.vertices[0], edge.vertices[1]) in edge_keys or \
+                       (edge.vertices[1], edge.vertices[0]) in edge_keys:
+                        face_count += 1
+
+                # Non-manifold if used by 0, 1, or 3+ faces
+                if face_count != 2:
+                    has_non_manifold = True
+                    break
+
+            # Check for loose vertices (not part of any edge)
+            if not has_non_manifold:
+                vertex_used = [False] * len(mesh.vertices)
+                for edge in mesh.edges:
+                    vertex_used[edge.vertices[0]] = True
+                    vertex_used[edge.vertices[1]] = True
+                if not all(vertex_used):
+                    has_non_manifold = True
+
+            eval_object.to_mesh_clear()
+
+            if has_non_manifold:
+                non_manifold_objects.append(blender_object.name)
+
+        return non_manifold_objects
+
     def execute(self, context: bpy.types.Context) -> Set[str]:
         """
         The main routine that writes the 3MF archive.
@@ -243,8 +307,33 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
 
         if self.use_selection:
             blender_objects = context.selected_objects
+            # Validate that at least one mesh object is selected
+            mesh_objects = [obj for obj in blender_objects if obj.type == 'MESH']
+            if not mesh_objects:
+                self.safe_report(
+                    {'ERROR'},
+                    "No mesh objects selected. Select at least one mesh object to export."
+                )
+                log.error("Export cancelled: No mesh objects in selection")
+                return {"CANCELLED"}
         else:
             blender_objects = context.scene.objects
+
+        # Check for non-manifold geometry before export
+        mesh_objects = [obj for obj in blender_objects if obj.type == 'MESH']
+        if mesh_objects:
+            non_manifold_objects = self.check_non_manifold_geometry(mesh_objects)
+            if non_manifold_objects:
+                obj_names = ", ".join(non_manifold_objects[:3])
+                if len(non_manifold_objects) > 3:
+                    obj_names += f", and {len(non_manifold_objects) - 3} more"
+                self.safe_report(
+                    {'WARNING'},
+                    f"Non-manifold geometry detected in: {obj_names}. "
+                    "This may cause problems in slicers."
+                )
+                log.warning(f"Non-manifold geometry found in {len(non_manifold_objects)} object(s): "
+                           f"{', '.join(non_manifold_objects)}")
 
         global_scale = self.unit_scale(context)
 

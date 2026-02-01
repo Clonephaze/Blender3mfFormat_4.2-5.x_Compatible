@@ -1,3 +1,21 @@
+1.2.5 — Quality of Life Improvements
+====
+Export validation, smart material reuse, and flexible import placement options.
+
+Features
+----
+* **Non-Manifold Detection:** Pre-export geometry validation warns about problematic meshes that may cause slicer issues
+* **Material Reuse:** Import now matches and reuses existing Blender materials by name and color, preventing duplication on re-import
+* **Selection Validation:** "Selection Only" export validates mesh objects are selected before proceeding
+* **Import Placement Options:** Control object placement (World Origin / 3D Cursor / Keep Original) and origin calculation on import
+
+Improvements
+----
+* All new features have preference defaults and integrate seamlessly into existing UI
+* Import origin-to-geometry calculated before transformation for correct positioning
+
+---
+
 1.2.4 — PrusaSlicer MMU Export & Color Preservation
 ====
 Full round-trip color support for PrusaSlicer MMU workflows and improved user feedback.
