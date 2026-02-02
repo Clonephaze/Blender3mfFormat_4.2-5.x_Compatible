@@ -9,19 +9,23 @@
 # You should have received a copy of the GNU General Public License along with this program; if not, write to the Free
 # Software Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-# Reload functionality.
-if "bpy" in locals():
-    import importlib
-    from . import import_3mf, export_3mf
-
-    importlib.reload(import_3mf)
-    importlib.reload(export_3mf)
-else:
-    from . import import_3mf, export_3mf
+# Reload functionality - must check before importing bpy
+_needs_reload = "bpy" in locals()
 
 import bpy.types  # To (un)register the add-on as an import/export function.
 import bpy.props  # For addon preferences properties.
 import bpy.utils  # To (un)register the add-on.
+
+from . import (
+    import_3mf,
+    export_3mf,
+)
+
+if _needs_reload:
+    import importlib
+    import_3mf = importlib.reload(import_3mf)
+    export_3mf = importlib.reload(export_3mf)
+    print("3MF Format Add-on Reloaded")
 
 from .export_3mf import Export3MF  # Exports 3MF files.
 from .import_3mf import Import3MF  # Imports 3MF files.
