@@ -35,8 +35,8 @@ For Blender versions **2.80–3.6**, use the [original repository releases](http
 
 | Slicer | Round-Trip Support | Notes |
 |--------|-------------------|-------|
-| **Orca Slicer / BambuStudio** | ✅ Full | Multi-color zones, materials, and metadata preserved |
-| **PrusaSlicer** | ✅ Full | Multi-material zones and colors fully preserved with MMU export format |
+| **Orca Slicer / BambuStudio** | ✅ Full | Multi-color zones (per-triangle), materials, and metadata preserved |
+| **PrusaSlicer** | ⚠️ Partial | Per-triangle MMU segmentation supported. Paint bucket tool (volumetric) not yet supported |
 | **Standard 3MF** | ✅ Full | Geometry, materials, and metadata |
 
 ---
@@ -168,15 +168,19 @@ This add-on includes special support for **Orca Slicer** and **BambuStudio** mul
 #### PrusaSlicer Compatibility
 
 **Import:**
-- Reads `slic3rpe:mmu_segmentation` attributes for multi-material zones
+- Reads `slic3rpe:mmu_segmentation` attributes for per-triangle multi-material zones
 - Color zones are preserved and converted to Blender materials
 - Uses the same filament index encoding as Orca Slicer
+- ⚠️ **Paint bucket tool (volumetric paint) not yet supported** - files using this feature will import as single-color
 
 **Export:**
-- Standard 3MF export works with PrusaSlicer
-- Color zones exported via Orca format are compatible with PrusaSlicer's multi-material painting
+- Per-triangle face materials exported with `slic3rpe:mmu_segmentation` attributes
+- Color zones exported via Orca format are compatible with PrusaSlicer's multi-material modifier workflow
+- Compatible with models where different materials are assigned to mesh parts
 
 > **NOTE**  
+> **Per-triangle vs Paint Bucket:** We support PrusaSlicer's per-triangle MMU segmentation (where each face has one material), but not the volumetric paint bucket tool which uses a proprietary per-vertex encoding. This is a research task for future versions.
+> 
 > PrusaSlicer does not embed actual RGB colors in 3MF files - it uses filament indices that reference your local filament profiles. When round-tripping through Blender, colors are generated based on zone indices and may not match your original filament colors exactly.
 
 See [EXTENSIONS.md](EXTENSIONS.md) for detailed documentation on extension support, vendor-specific features, and adding new extensions.
