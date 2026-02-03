@@ -5,7 +5,7 @@
 
 This is an add-on for Blender for importing and exporting **3MF (3D Manufacturing Format)** files.
 
-3MF is a modern format for 3D printing. Unlike STL, it carries more than geometry: units, materials, colors, metadata, and slicer-relevant information. Blender sits upstream of slicers in many workflows, and this add-on helps make that process smooth and predictable.
+3MF is a modern format for 3D manufacturing. Unlike STL, it carries more than geometry: units, materials, colors, metadata, and slicer-relevant information. Blender sits upstream of slicers in many workflows, and this add-on helps make that process smooth and predictable.
 
 The goal is simple: make **Blender a reliable, spec-compliant tool in real 3MF workflows**, with solid behavior and interoperability with modern slicers.
 
