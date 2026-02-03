@@ -33,11 +33,11 @@ For Blender versions **2.80–3.6**, see the [original releases](https://github.
 
 ### Slicer Compatibility
 
-| Slicer                        | Round-Trip Support | Notes                                                                                          |
-| ----------------------------- | ----------------- | ---------------------------------------------------------------------------------------------- |
-| **Orca Slicer / BambuStudio** | Partial           | Per-triangle material/color zones preserved. Does **not** reproduce slicer paint workflows    |
-| **PrusaSlicer**               | Partial           | Per-triangle material/color zones preserved. No Blender paint-mode support                     |
-| **Standard 3MF**              | Full              | Geometry, materials, metadata                                                                  |
+| Slicer | Round-Trip Support | Notes |
+|--------|-------------------|-------|
+| **Orca Slicer / BambuStudio** | ✅ Full | Multi-color zones (per-triangle), materials, and metadata preserved |
+| **PrusaSlicer** | ⚠️ Partial | Per-triangle MMU segmentation supported. Paint bucket tool (volumetric) not yet supported |
+| **Standard 3MF** | ✅ Full | Geometry, materials, and metadata |
 
 ---
 
@@ -141,15 +141,21 @@ Filament colors reload automatically from metadata for accurate material recreat
 
 ---
 
-## PrusaSlicer Compatibility
+**Import:**
+- Reads `slic3rpe:mmu_segmentation` attributes for per-triangle multi-material zones
+- Color zones are preserved and converted to Blender materials
+- Uses the same filament index encoding as Orca Slicer
+- ⚠️ **Paint bucket tool (volumetric paint) not yet supported** - files using this feature will import as single-color
 
-**Import**
-- Reads `slic3rpe:mmu_segmentation` attributes
-- Preserves multi-material zones as Blender materials
+**Export:**
+- Per-triangle face materials exported with `slic3rpe:mmu_segmentation` attributes
+- Color zones exported via Orca format are compatible with PrusaSlicer's multi-material modifier workflow
+- Compatible with models where different materials are assigned to mesh parts
 
-**Export**
-- Standard 3MF export works
-- Orca-format color zones compatible with PrusaSlicer painting tools
+> **NOTE**  
+> **Per-triangle vs Paint Bucket:** We support PrusaSlicer's per-triangle MMU segmentation (where each face has one material), but not the volumetric paint bucket tool which uses a proprietary per-vertex encoding. This is a research task for future versions.
+> 
+> PrusaSlicer does not embed actual RGB colors in 3MF files - it uses filament indices that reference your local filament profiles. When round-tripping through Blender, colors are generated based on zone indices and may not match your original filament colors exactly.
 
 PrusaSlicer does not embed actual RGB colors in 3MF files; it uses filament indices referencing local profiles. Round-tripping through Blender generates colors based on zone indices and may not match original filament colors exactly.
 
