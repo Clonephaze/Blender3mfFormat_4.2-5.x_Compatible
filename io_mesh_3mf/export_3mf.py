@@ -105,6 +105,15 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         default=False,
     )
 
+    use_components: bpy.props.BoolProperty(
+        name="Use Components",
+        description="Export linked duplicates as component instances for smaller file sizes. "
+                    "When objects share the same mesh data (Alt+D duplicates), the mesh is exported "
+                    "once and referenced multiple times. Dramatically reduces file size for assemblies "
+                    "with repeated parts.",
+        default=True,
+    )
+
     mmu_slicer_format: bpy.props.EnumProperty(
         name="Slicer Format",
         description="Target slicer format for multi-material export",
@@ -159,6 +168,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         layout.prop(self, "use_selection")
         layout.prop(self, "export_hidden")
         layout.prop(self, "use_mesh_modifiers")
+        layout.prop(self, "use_components")
 
         # Triangle Sets - disabled when using Multi-Material (not supported by slicers)
         triangle_sets_row = layout.row()

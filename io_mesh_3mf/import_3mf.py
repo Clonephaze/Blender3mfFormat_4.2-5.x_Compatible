@@ -325,7 +325,12 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         placement_box.prop(self, "origin_to_geometry")
 
     def invoke(self, context, event):
-        """Initialize properties from preferences when the import dialog is opened."""
+        """
+        Initialize properties from preferences when the import dialog is opened.
+        
+        If files are already provided (e.g., from drag-and-drop), shows a popup
+        with just the import options instead of the full file browser.
+        """
         prefs = context.preferences.addons.get(__package__)
         if prefs and prefs.preferences:
             self.global_scale = prefs.preferences.default_global_scale
@@ -335,6 +340,11 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
             self.origin_to_geometry = prefs.preferences.default_origin_to_geometry
             if hasattr(prefs.preferences, 'default_grid_spacing'):
                 self.grid_spacing = prefs.preferences.default_grid_spacing
+        
+        # If files are already provided (drag-drop), show popup instead of file browser
+        if getattr(self, 'directory', '') and getattr(self, 'files', None):
+            return self.invoke_popup(context)
+        
         self.report({'INFO'}, "Importing, please wait...")
         return super().invoke(context, event)
 
@@ -539,6 +549,7 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
             self.resource_pbr_texture_displays = {}  # ID -> ResourcePBRTextureDisplay (round-trip)
             self.resource_colorgroups = {}  # ID -> ResourceColorgroup (round-trip)
             self.resource_pbr_display_props = {}  # ID -> ResourcePBRDisplayProps (round-trip)
+            self.component_instance_cache = {}  # Track component instances: objectid -> (mesh_data, instances_count)
             self.num_loaded = 0
             self.imported_objects = []  # Track all imported objects for grid layout
             self.vendor_format = None  # Will be set when we detect vendor-specific format
@@ -2135,6 +2146,7 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         metadata: Metadata,
         objectid_stack_trace: List[int],
         parent: Optional[bpy.types.Object] = None,
+        is_temp_component_def: bool = False,
     ) -> Optional[bpy.types.Object]:
         """
         Converts a resource object into a Blender object.
@@ -2142,103 +2154,162 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         This resource object may refer to components that need to be built along. These components may again have
         subcomponents, and so on. These will be built recursively. A "stack trace" will be traced in order to prevent
         going into an infinite recursion.
+        
+        Component instances (objects with no mesh, only a single component reference) are created as
+        linked duplicates in Blender, sharing the same mesh data.
+        
         :param resource_object: The resource object that needs to be converted.
         :param transformation: A transformation matrix to apply to this resource object.
         :param metadata: A collection of metadata belonging to this build item.
         :param objectid_stack_trace: A list of all object IDs that have been processed so far, including the object ID
         we're processing now.
         :param parent: The resulting object must be marked as a child of this Blender object.
+        :param is_temp_component_def: If True, this is a temporary component definition that will be deleted,
+                                      so don't add it to imported_objects list.
         :return: A sequence of Blender objects. These objects may be "nested" in the sense that they sometimes refer to
         other objects as their parents.
         """
-        # Create a mesh if there is mesh data here.
-        mesh = None
-        if resource_object.triangles:
-            mesh = bpy.data.meshes.new("3MF Mesh")
-            mesh.from_pydata(resource_object.vertices, [], resource_object.triangles)
-            mesh.update()
-            resource_object.metadata.store(mesh)
-
-            # Mapping resource materials to indices in the list of materials for this specific mesh.
-            # Build material index array for batch assignment (much faster than per-face assignment)
-            materials_to_index = {}
-            material_indices = [0] * len(resource_object.materials)  # Pre-allocate
-
-            for triangle_index, triangle_material in enumerate(
-                resource_object.materials
-            ):
-                if triangle_material is None:
-                    continue
-
-                # Add the material to Blender if it doesn't exist yet. Otherwise create a new material in Blender.
-                if triangle_material not in self.resource_to_material:
-                    # Cache material name to protect Unicode characters from garbage collection
-                    material_name = str(triangle_material.name)
-
-                    # Try to reuse existing material if enabled (not for textured materials or PBR textured materials)
-                    material = None
-                    has_pbr_textures = (
-                        triangle_material.basecolor_texid is not None
-                        or triangle_material.metallic_texid is not None
-                        or triangle_material.roughness_texid is not None
-                        or triangle_material.specular_texid is not None
-                        or triangle_material.glossiness_texid is not None
-                    )
-
-                    if self.reuse_materials and triangle_material.texture_id is None and not has_pbr_textures:
-                        material = self.find_existing_material(material_name, triangle_material.color)
-
-                    # Create new material if not found or reuse disabled
-                    if material is None:
-                        material = bpy.data.materials.new(material_name)
-                        material.use_nodes = True
-
-                        # Check if this is a textured material
-                        if triangle_material.texture_id is not None:
-                            # Get texture group and texture
-                            texture_group = self.resource_texture_groups.get(triangle_material.texture_id)
-                            if texture_group:
-                                texture = self.resource_textures.get(texture_group.texid)
-                                if texture and texture.blender_image:
-                                    # Create material with Image Texture node
-                                    self._setup_textured_material(material, texture)
-                                    # Also apply PBR textures (roughness, metallic, etc.)
-                                    self._apply_pbr_textures_to_material(material, triangle_material)
-                                else:
-                                    log.warning(f"Texture not found for texture group {triangle_material.texture_id}")
-                            else:
-                                log.warning(f"Texture group not found: {triangle_material.texture_id}")
-                        else:
-                            # Standard color-based material
-                            principled = bpy_extras.node_shader_utils.PrincipledBSDFWrapper(
-                                material, is_readonly=False
-                            )
-                            principled.base_color = triangle_material.color[:3]
-                            principled.alpha = triangle_material.color[3]
-
-                            # Apply scalar PBR properties from 3MF Materials Extension
-                            self._apply_pbr_to_principled(principled, material, triangle_material)
-
-                            # Apply textured PBR properties (metallic/roughness/specular texture maps)
-                            self._apply_pbr_textures_to_material(material, triangle_material)
-
-                    self.resource_to_material[triangle_material] = material
+        # Detect component instance: object with no mesh data, only a single component reference
+        # This is the pattern created by component-optimized export
+        is_component_instance = (
+            not resource_object.triangles and 
+            resource_object.components and 
+            len(resource_object.components) == 1
+        )
+        
+        if is_component_instance:
+            # This is a component instance - create linked duplicate
+            component = resource_object.components[0]
+            component_id = component.resource_object
+            
+            # Check if we already have a mesh for this component
+            if component_id in self.component_instance_cache:
+                # Reuse existing mesh data (linked duplicate)
+                cached_mesh, instance_count = self.component_instance_cache[component_id]
+                mesh = cached_mesh
+                self.component_instance_cache[component_id] = (cached_mesh, instance_count + 1)
+                log.info(f"Creating linked duplicate {instance_count + 1} for component {component_id}")
+            else:
+                # First instance - need to build the component and cache its mesh
+                try:
+                    component_resource = self.resource_objects[component_id]
+                except KeyError:
+                    log.warning(f"Component reference to unknown resource ID: {component_id}")
+                    return None
+                
+                # Build the component to get its mesh
+                # Use identity transform - we'll apply the instance transform later
+                # Mark as temporary so it doesn't get added to imported_objects list
+                temp_obj = self.build_object(
+                    component_resource,
+                    mathutils.Matrix.Identity(4),
+                    Metadata(),
+                    objectid_stack_trace + [component_id],
+                    parent=None,
+                    is_temp_component_def=True
+                )
+                
+                if temp_obj and temp_obj.data:
+                    mesh = temp_obj.data
+                    # Cache the mesh for future instances
+                    self.component_instance_cache[component_id] = (mesh, 1)
+                    log.info(f"Cached component {component_id} mesh for linked duplicates")
+                    
+                    # Remove the temporary object from the scene
+                    # We only wanted its mesh data
+                    bpy.data.objects.remove(temp_obj, do_unlink=True)
                 else:
-                    material = self.resource_to_material[triangle_material]
+                    log.warning(f"Failed to build component {component_id}")
+                    return None
+        else:
+            # Normal object or container with multiple components - create mesh as usual
+            mesh = None
+            if resource_object.triangles:
+                mesh = bpy.data.meshes.new("3MF Mesh")
+                mesh.from_pydata(resource_object.vertices, [], resource_object.triangles)
+                mesh.update()
+                resource_object.metadata.store(mesh)
 
-                # Add the material to this mesh if it doesn't have it yet. Otherwise re-use previous index.
-                if triangle_material not in materials_to_index:
-                    new_index = len(mesh.materials.items())
-                    if new_index > 32767:
-                        log.warning(
-                            "Blender doesn't support more than 32768 different materials per mesh."
-                        )
+                # Mapping resource materials to indices in the list of materials for this specific mesh.
+                # Build material index array for batch assignment (much faster than per-face assignment)
+                materials_to_index = {}
+                material_indices = [0] * len(resource_object.materials)  # Pre-allocate
+
+                for triangle_index, triangle_material in enumerate(
+                    resource_object.materials
+                ):
+                    if triangle_material is None:
                         continue
-                    mesh.materials.append(material)
-                    materials_to_index[triangle_material] = new_index
 
-                # Store material index for batch assignment
-                material_indices[triangle_index] = materials_to_index[triangle_material]
+                    # Add the material to Blender if it doesn't exist yet. Otherwise create a new material in Blender.
+                    if triangle_material not in self.resource_to_material:
+                        # Cache material name to protect Unicode characters from garbage collection
+                        material_name = str(triangle_material.name)
+
+                        # Try to reuse existing material if enabled (not for textured materials or PBR textured materials)
+                        material = None
+                        has_pbr_textures = (
+                            triangle_material.basecolor_texid is not None
+                            or triangle_material.metallic_texid is not None
+                            or triangle_material.roughness_texid is not None
+                            or triangle_material.specular_texid is not None
+                            or triangle_material.glossiness_texid is not None
+                        )
+
+                        if self.reuse_materials and triangle_material.texture_id is None and not has_pbr_textures:
+                            material = self.find_existing_material(material_name, triangle_material.color)
+
+                        # Create new material if not found or reuse disabled
+                        if material is None:
+                            material = bpy.data.materials.new(material_name)
+                            material.use_nodes = True
+
+                            # Check if this is a textured material
+                            if triangle_material.texture_id is not None:
+                                # Get texture group and texture
+                                texture_group = self.resource_texture_groups.get(triangle_material.texture_id)
+                                if texture_group:
+                                    texture = self.resource_textures.get(texture_group.texid)
+                                    if texture and texture.blender_image:
+                                        # Create material with Image Texture node
+                                        self._setup_textured_material(material, texture)
+                                        # Also apply PBR textures (roughness, metallic, etc.)
+                                        self._apply_pbr_textures_to_material(material, triangle_material)
+                                    else:
+                                        log.warning(f"Texture not found for texture group {triangle_material.texture_id}")
+                                else:
+                                    log.warning(f"Texture group not found: {triangle_material.texture_id}")
+                            else:
+                                # Standard color-based material
+                                principled = bpy_extras.node_shader_utils.PrincipledBSDFWrapper(
+                                    material, is_readonly=False
+                                )
+                                principled.base_color = triangle_material.color[:3]
+                                principled.alpha = triangle_material.color[3]
+
+                                # Apply scalar PBR properties from 3MF Materials Extension
+                                self._apply_pbr_to_principled(principled, material, triangle_material)
+
+                                # Apply textured PBR properties (metallic/roughness/specular texture maps)
+                                self._apply_pbr_textures_to_material(material, triangle_material)
+
+                        self.resource_to_material[triangle_material] = material
+                    else:
+                        material = self.resource_to_material[triangle_material]
+
+                    # Add the material to this mesh if it doesn't have it yet. Otherwise re-use previous index.
+                    if triangle_material not in materials_to_index:
+                        new_index = len(mesh.materials.items())
+                        if new_index > 32767:
+                            log.warning(
+                                "Blender doesn't support more than 32768 different materials per mesh."
+                            )
+                            continue
+                        mesh.materials.append(material)
+                        materials_to_index[triangle_material] = new_index
+
+                    # Store material index for batch assignment
+                    material_indices[triangle_index] = materials_to_index[triangle_material]
 
             # Batch assign material indices using foreach_set (much faster than per-face loop)
             if materials_to_index:  # Only if we have materials to assign
@@ -2359,8 +2430,8 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
 
             blender_object.matrix_world = transformation
 
-            # Track for grid layout (only root objects, not parented components)
-            if parent is None and hasattr(self, 'imported_objects'):
+            # Track for grid layout (only root objects, not parented components, and not temp component defs)
+            if parent is None and not is_temp_component_def and hasattr(self, 'imported_objects'):
                 self.imported_objects.append(blender_object)
 
             metadata.store(blender_object)
@@ -2376,30 +2447,33 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
             # Don't create an Empty, just pass through to components.
             blender_object = parent
 
-        # Recurse for all components.
-        for component in resource_object.components:
-            if component.resource_object in objectid_stack_trace:
-                # These object IDs refer to each other in a loop. Don't go in there!
-                log.warning(
-                    f"Recursive components in object ID: {component.resource_object}"
+        # Recurse for all components (skip if this was a component instance - already handled)
+        if not is_component_instance:
+            for component in resource_object.components:
+                if component.resource_object in objectid_stack_trace:
+                    # These object IDs refer to each other in a loop. Don't go in there!
+                    log.warning(
+                        f"Recursive components in object ID: {component.resource_object}"
+                    )
+                    continue
+                try:
+                    child_object = self.resource_objects[component.resource_object]
+                except KeyError:  # Invalid resource ID. Doesn't exist!
+                    log.warning(
+                        f"Build item with unknown resource ID: {component.resource_object}"
+                    )
+                    continue
+                transform = (
+                    transformation @ component.transformation
+                )  # Apply the child's transformation and pass it on.
+                objectid_stack_trace.append(component.resource_object)
+                self.build_object(
+                    child_object,
+                    transform,
+                    metadata,
+                    objectid_stack_trace,
+                    parent=blender_object,
                 )
-                continue
-            try:
-                child_object = self.resource_objects[component.resource_object]
-            except KeyError:  # Invalid resource ID. Doesn't exist!
-                log.warning(
-                    f"Build item with unknown resource ID: {component.resource_object}"
-                )
-                continue
-            transform = (
-                transformation @ component.transformation
-            )  # Apply the child's transformation and pass it on.
-            objectid_stack_trace.append(component.resource_object)
-            self.build_object(
-                child_object,
-                transform,
-                metadata,
-                objectid_stack_trace,
-                parent=blender_object,
-            )
-            objectid_stack_trace.pop()
+                objectid_stack_trace.pop()
+
+        return blender_object

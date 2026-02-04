@@ -43,6 +43,12 @@ from .extensions import (
     ORCA_EXTENSION,
 )
 from .metadata import Metadata
+from .export_components import (
+    detect_linked_duplicates,
+    should_use_components,
+    get_component_objects,
+    get_non_component_objects,
+)
 from .export_utils import (
     ORCA_FILAMENT_CODES,
     write_core_properties,
@@ -243,13 +249,42 @@ class StandardExporter(BaseExporter):
                       global_scale: float) -> None:
         """
         Writes a group of objects into the 3MF archive.
+        
+        If use_components is enabled, detects linked duplicates and exports them
+        as component instances for smaller file sizes.
         """
         transformation = mathutils.Matrix.Scale(global_scale, 4)
+
+        # Detect linked duplicates if component optimization is enabled
+        component_groups = {}
+        if self.op.use_components:
+            component_groups = detect_linked_duplicates(blender_objects)
+            
+            if component_groups and should_use_components(component_groups, blender_objects):
+                log.info(f"Using component optimization: {len(component_groups)} component groups detected")
+                self.op.safe_report({'INFO'}, 
+                    f"Using component optimization: {len(component_groups)} component groups detected")
+                
+                # First, write component definitions (the shared mesh data)
+                for mesh_data, group in component_groups.items():
+                    # Use the first object as the representative for this component
+                    representative_obj = group.objects[0]
+                    component_id = self._write_component_definition(
+                        resources_element, representative_obj
+                    )
+                    group.component_id = component_id
+                    log.info(f"Component definition {component_id}: '{mesh_data.name}' "
+                            f"({len(group.objects)} instances)")
+            else:
+                # Not enough benefit, export normally
+                component_groups = {}
 
         build_element = xml.etree.ElementTree.SubElement(
             root, f"{{{MODEL_NAMESPACE}}}build"
         )
         hidden_skipped = 0
+        
+        # Calculate total objects for progress tracking
         total_objects = sum(
             1
             for blender_object in blender_objects
@@ -273,16 +308,28 @@ class StandardExporter(BaseExporter):
                 progress = min(95, int((processed_objects / total_objects) * 95))
                 self.op._progress_update(progress, f"Writing {processed_objects}/{total_objects} objects...")
 
-            objectid, mesh_transformation = self.write_object_resource(
-                resources_element, blender_object
-            )
+            # Check if this object is a component instance
+            if (component_groups and 
+                blender_object.type == 'MESH' and 
+                blender_object.data in component_groups):
+                # Write as component instance (just a reference)
+                objectid = self._write_component_instance(
+                    resources_element, blender_object, 
+                    component_groups[blender_object.data].component_id
+                )
+            else:
+                # Write as normal object with inline mesh
+                objectid, mesh_transformation = self.write_object_resource(
+                    resources_element, blender_object
+                )
 
             item_element = xml.etree.ElementTree.SubElement(
                 build_element, f"{{{MODEL_NAMESPACE}}}item"
             )
             self.op.num_written += 1
             item_element.attrib[self.attr("objectid")] = str(objectid)
-            mesh_transformation = transformation @ mesh_transformation
+            
+            mesh_transformation = transformation @ blender_object.matrix_world
             if mesh_transformation != mathutils.Matrix.Identity(4):
                 item_element.attrib[self.attr("transform")] = (
                     format_transformation(mesh_transformation)
@@ -494,6 +541,158 @@ class StandardExporter(BaseExporter):
                 write_metadata(metadatagroup_element, metadata, self.op.use_orca_format)
 
         return new_resource_id, mesh_transformation
+
+    def _write_component_definition(self, resources_element: xml.etree.ElementTree.Element,
+                                    blender_object: bpy.types.Object) -> int:
+        """
+        Write a component definition - a reusable mesh resource.
+        
+        This writes just the mesh data without a transform.
+        The mesh can then be referenced multiple times as component instances.
+        
+        :param resources_element: The <resources> element to write to
+        :param blender_object: The Blender object (used as representative for this component)
+        :return: The resource ID of the component definition
+        """
+        component_id = self.op.next_resource_id
+        self.op.next_resource_id += 1
+        
+        object_element = xml.etree.ElementTree.SubElement(
+            resources_element, f"{{{MODEL_NAMESPACE}}}object"
+        )
+        object_element.attrib[self.attr("id")] = str(component_id)
+        # Use mesh name for the component definition
+        mesh_name = str(blender_object.data.name)
+        object_element.attrib[self.attr("name")] = mesh_name
+        
+        # Get evaluated mesh (with modifiers if enabled)
+        if self.op.use_mesh_modifiers:
+            dependency_graph = bpy.context.evaluated_depsgraph_get()
+            eval_object = blender_object.evaluated_get(dependency_graph)
+        else:
+            eval_object = blender_object
+        
+        try:
+            mesh = eval_object.to_mesh()
+        except RuntimeError:
+            return component_id
+        
+        if mesh is None:
+            return component_id
+        
+        mesh.calc_loop_triangles()
+        
+        if len(mesh.vertices) > 0:
+            mesh_element = xml.etree.ElementTree.SubElement(
+                object_element, f"{{{MODEL_NAMESPACE}}}mesh"
+            )
+            
+            # Determine most common material
+            most_common_material_list_index = 0
+            
+            # Check for textured materials
+            has_textured_material = False
+            if hasattr(self.op, 'texture_groups') and self.op.texture_groups:
+                for mat_slot in blender_object.material_slots:
+                    if mat_slot.material and mat_slot.material.name in self.op.texture_groups:
+                        has_textured_material = True
+                        break
+            
+            # Handle material assignment (same logic as write_object_resource)
+            if self.op.use_orca_format and self.op.vertex_colors and self.op.mmu_slicer_format == 'ORCA':
+                color_counts = {}
+                for triangle in mesh.loop_triangles:
+                    triangle_color = get_triangle_color(mesh, triangle, blender_object)
+                    if triangle_color and triangle_color in self.op.vertex_colors:
+                        color_counts[triangle_color] = color_counts.get(triangle_color, 0) + 1
+                
+                if color_counts:
+                    most_common_color = max(color_counts, key=color_counts.get)
+                    colorgroup_id = self.op.vertex_colors[most_common_color]
+                    object_element.attrib[self.attr("pid")] = str(colorgroup_id)
+                    object_element.attrib[self.attr("pindex")] = "0"
+                    most_common_material_list_index = colorgroup_id
+            elif not has_textured_material and self.op.material_name_to_index:
+                material_indices = [
+                    triangle.material_index for triangle in mesh.loop_triangles
+                ]
+                
+                if material_indices and blender_object.material_slots:
+                    counter = collections.Counter(material_indices)
+                    most_common_material_object_index = counter.most_common(1)[0][0]
+                    most_common_material = blender_object.material_slots[
+                        most_common_material_object_index
+                    ].material
+                    
+                    if most_common_material is not None:
+                        most_common_material_list_index = self.op.material_name_to_index[
+                            most_common_material.name
+                        ]
+                        object_element.attrib[self.attr("pid")] = str(self.op.material_resource_id)
+                        object_element.attrib[self.attr("pindex")] = str(
+                            most_common_material_list_index
+                        )
+            
+            # Write vertices
+            write_vertices(mesh_element, mesh.vertices, self.op.use_orca_format, self.op.coordinate_precision)
+            
+            # Write triangles
+            write_triangles(
+                mesh_element,
+                mesh.loop_triangles,
+                most_common_material_list_index,
+                blender_object.material_slots,
+                self.op.material_name_to_index,
+                self.op.use_orca_format,
+                self.op.mmu_slicer_format,
+                self.op.vertex_colors,
+                mesh,
+                blender_object,
+                getattr(self.op, 'texture_groups', None),
+                str(self.op.material_resource_id) if self.op.material_resource_id else None,
+            )
+        
+        eval_object.to_mesh_clear()
+        return component_id
+
+    def _write_component_instance(self, resources_element: xml.etree.ElementTree.Element,
+                                  blender_object: bpy.types.Object,
+                                  component_id: int) -> int:
+        """
+        Write a component instance - an object that references a component definition.
+        
+        This creates a container object with a <component> child that references
+        the shared mesh data. Only the transform is stored, not the mesh.
+        
+        :param resources_element: The <resources> element to write to
+        :param blender_object: The Blender object instance
+        :param component_id: The resource ID of the component definition to reference
+        :return: The resource ID of this instance container
+        """
+        instance_id = self.op.next_resource_id
+        self.op.next_resource_id += 1
+        
+        # Create container object (type="model" by default)
+        object_element = xml.etree.ElementTree.SubElement(
+            resources_element, f"{{{MODEL_NAMESPACE}}}object"
+        )
+        object_element.attrib[self.attr("id")] = str(instance_id)
+        object_name = str(blender_object.name)
+        object_element.attrib[self.attr("name")] = object_name
+        
+        # Add component reference
+        components_element = xml.etree.ElementTree.SubElement(
+            object_element, f"{{{MODEL_NAMESPACE}}}components"
+        )
+        component_element = xml.etree.ElementTree.SubElement(
+            components_element, f"{{{MODEL_NAMESPACE}}}component"
+        )
+        component_element.attrib[self.attr("objectid")] = str(component_id)
+        
+        # Components don't need transforms here - the instance transform is applied
+        # at the build item level
+        
+        return instance_id
 
 
 class OrcaExporter(BaseExporter):

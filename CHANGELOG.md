@@ -1,3 +1,19 @@
+
+1.3.2 — Component Instances
+====
+Features
+----
+* Linked duplicates (Alt+D) export as 3MF component references (shared mesh, smaller file size)
+* Import restores linked duplicates
+* Quick options popup for drag-drop
+
+Technical
+----
+* Component definitions stored in `<resources>` with full mesh data
+* Instance containers use `<components>` with `<component objectid="ref"/>` references
+* Transforms applied at build item level
+* Compatible with all material types (basematerials, textures, PBR, Orca color zones)
+
 1.3.1 — Drag & Drop Import
 ====
 Features
