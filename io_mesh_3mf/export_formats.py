@@ -1,4 +1,4 @@
-# Blender add-on to import and export 3MF files.
+﻿# Blender add-on to import and export 3MF files.
 # Copyright (C) 2020 Ghostkeeper
 # Copyright (C) 2025 Jack (modernization for Blender 4.2+)
 # This add-on is free software; you can redistribute it and/or modify it under the terms of the GNU General Public
@@ -127,7 +127,12 @@ class StandardExporter(BaseExporter):
             root, f"{{{MODEL_NAMESPACE}}}resources"
         )
 
-        self.op.material_name_to_index, self.op.next_resource_id, self.op.material_resource_id, basematerials_element = write_materials(
+        (
+            self.op.material_name_to_index,
+            self.op.next_resource_id,
+            self.op.material_resource_id,
+            basematerials_element
+        ) = write_materials(
             resources_element, blender_objects, self.op.use_orca_format,
             self.op.vertex_colors, self.op.next_resource_id
         )
@@ -136,7 +141,7 @@ class StandardExporter(BaseExporter):
         # with basecolortextureid, NOT texture2dgroup
         pbr_textured_materials = detect_pbr_textured_materials(blender_objects)
         pbr_material_names = set()  # Track materials that have full PBR textures
-        
+
         if pbr_textured_materials and basematerials_element is not None:
             # Check which materials have actual PBR textures (roughness or metallic)
             for mat_name, pbr_info in pbr_textured_materials.items():
@@ -166,7 +171,7 @@ class StandardExporter(BaseExporter):
                         basematerials_element
                     )
                     log.info(f"Created PBR display properties for {len(material_to_display_props)} materials")
-                    
+
                     # Store which materials use PBR (triangles should reference basematerials, not texture2dgroup)
                     self.op.pbr_material_names = pbr_material_names
 
@@ -174,14 +179,14 @@ class StandardExporter(BaseExporter):
         # These use texture2dgroup for UV-mapped base color only
         textured_materials = detect_textured_materials(blender_objects)
         self.op.texture_groups = {}
-        
+
         # Filter out materials that have full PBR textures (they use pbmetallictexturedisplayproperties)
         textured_materials_filtered = {
-            mat_name: tex_info 
+            mat_name: tex_info
             for mat_name, tex_info in textured_materials.items()
             if mat_name not in pbr_material_names
         }
-        
+
         if textured_materials_filtered:
             log.info(f"Detected {len(textured_materials_filtered)} base-color-only textured materials")
             # Activate Materials Extension

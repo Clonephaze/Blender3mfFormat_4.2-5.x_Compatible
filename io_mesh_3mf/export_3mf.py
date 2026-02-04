@@ -361,7 +361,8 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             mesh,
             blender_object,
             getattr(self, 'texture_groups', None),
-            str(self.material_resource_id) if hasattr(self, 'material_resource_id') and self.material_resource_id else None,
+            str(self.material_resource_id)
+            if hasattr(self, 'material_resource_id') and self.material_resource_id else None,
         )
 
     def write_objects(self, root, resources_element, blender_objects, global_scale: float) -> None:
