@@ -25,7 +25,7 @@ import re
 import uuid
 import xml.etree.ElementTree
 import zipfile
-from typing import Dict, Set, List, Tuple, Optional
+from typing import Set, List, Tuple
 
 import bpy
 import mathutils
@@ -34,13 +34,11 @@ from .constants import (
     MODEL_LOCATION,
     MODEL_NAMESPACE,
     MODEL_REL,
-    MATERIAL_NAMESPACE,
     PRODUCTION_NAMESPACE,
     BAMBU_NAMESPACE,
     RELS_NAMESPACE,
 )
 from .extensions import (
-    ExtensionManager,
     PRODUCTION_EXTENSION,
     ORCA_EXTENSION,
 )
@@ -58,6 +56,14 @@ from .export_utils import (
     format_transformation,
     collect_face_colors,
     get_triangle_color,
+    detect_textured_materials,
+    write_textures_to_archive,
+    write_texture_relationships,
+    write_texture_resources,
+    write_passthrough_materials,
+    detect_pbr_textured_materials,
+    write_pbr_textures_to_archive,
+    write_pbr_texture_display_properties,
 )
 
 log = logging.getLogger(__name__)
@@ -121,10 +127,94 @@ class StandardExporter(BaseExporter):
             root, f"{{{MODEL_NAMESPACE}}}resources"
         )
 
-        self.op.material_name_to_index, self.op.next_resource_id, self.op.material_resource_id = write_materials(
+        self.op.material_name_to_index, self.op.next_resource_id, self.op.material_resource_id, basematerials_element = write_materials(
             resources_element, blender_objects, self.op.use_orca_format,
             self.op.vertex_colors, self.op.next_resource_id
         )
+
+        # Detect PBR textured materials FIRST - these will use pbmetallictexturedisplayproperties
+        # with basecolortextureid, NOT texture2dgroup
+        pbr_textured_materials = detect_pbr_textured_materials(blender_objects)
+        pbr_material_names = set()  # Track materials that have full PBR textures
+        
+        if pbr_textured_materials and basematerials_element is not None:
+            # Check which materials have actual PBR textures (roughness or metallic)
+            for mat_name, pbr_info in pbr_textured_materials.items():
+                if pbr_info.get('roughness') or pbr_info.get('metallic'):
+                    pbr_material_names.add(mat_name)
+
+            if pbr_material_names:
+                log.info(f"Detected PBR textured materials: {list(pbr_material_names)}")
+                # Activate Materials Extension
+                from .extensions import MATERIALS_EXTENSION
+                self.op.extension_manager.activate(MATERIALS_EXTENSION.namespace)
+
+                # Write PBR texture files to archive (includes base_color for PBR materials)
+                pbr_image_to_path = write_pbr_textures_to_archive(archive, pbr_textured_materials)
+
+                # Write texture relationships for PBR textures
+                if pbr_image_to_path:
+                    write_texture_relationships(archive, pbr_image_to_path)
+
+                    # Write pbmetallictexturedisplayproperties elements and link to basematerials
+                    # This includes basecolortextureid for the base color texture
+                    material_to_display_props, self.op.next_resource_id = write_pbr_texture_display_properties(
+                        resources_element,
+                        pbr_textured_materials,
+                        pbr_image_to_path,
+                        self.op.next_resource_id,
+                        basematerials_element
+                    )
+                    log.info(f"Created PBR display properties for {len(material_to_display_props)} materials")
+                    
+                    # Store which materials use PBR (triangles should reference basematerials, not texture2dgroup)
+                    self.op.pbr_material_names = pbr_material_names
+
+        # Detect and export textured materials that DON'T have PBR textures
+        # These use texture2dgroup for UV-mapped base color only
+        textured_materials = detect_textured_materials(blender_objects)
+        self.op.texture_groups = {}
+        
+        # Filter out materials that have full PBR textures (they use pbmetallictexturedisplayproperties)
+        textured_materials_filtered = {
+            mat_name: tex_info 
+            for mat_name, tex_info in textured_materials.items()
+            if mat_name not in pbr_material_names
+        }
+        
+        if textured_materials_filtered:
+            log.info(f"Detected {len(textured_materials_filtered)} base-color-only textured materials")
+            # Activate Materials Extension
+            from .extensions import MATERIALS_EXTENSION
+            self.op.extension_manager.activate(MATERIALS_EXTENSION.namespace)
+
+            # Write texture files to archive
+            image_to_path = write_textures_to_archive(archive, textured_materials_filtered)
+
+            # Write texture relationships (OPC requirement)
+            write_texture_relationships(archive, image_to_path)
+
+            # Write texture2d and texture2dgroup elements
+            self.op.texture_groups, self.op.next_resource_id = write_texture_resources(
+                resources_element,
+                textured_materials_filtered,
+                image_to_path,
+                self.op.next_resource_id,
+                self.op.coordinate_precision
+            )
+            log.info(f"Created {len(self.op.texture_groups)} texture groups")
+
+        # Write passthrough materials (compositematerials, multiproperties, etc.)
+        # These are stored from import for round-trip support
+        # IDs are remapped to avoid conflicts with newly created materials
+        self.op.next_resource_id, passthrough_written = write_passthrough_materials(
+            resources_element,
+            self.op.next_resource_id
+        )
+        # Activate Materials Extension if passthrough data was written
+        if passthrough_written:
+            from .extensions import MATERIALS_EXTENSION
+            self.op.extension_manager.activate(MATERIALS_EXTENSION.namespace)
 
         self.op._progress_update(15, "Writing objects...")
         self.write_objects(root, resources_element, blender_objects, global_scale)
@@ -313,6 +403,14 @@ class StandardExporter(BaseExporter):
             log.info(f"  mesh has {len(mesh.loop_triangles)} triangles, "
                      f"{len(blender_object.material_slots)} material slots")
 
+            # Check if this object has any textured materials
+            has_textured_material = False
+            if hasattr(self.op, 'texture_groups') and self.op.texture_groups:
+                for mat_slot in blender_object.material_slots:
+                    if mat_slot.material and mat_slot.material.name in self.op.texture_groups:
+                        has_textured_material = True
+                        break
+
             # In Orca mode, use face colors mapped to colorgroup IDs
             if self.op.use_orca_format and self.op.vertex_colors and self.op.mmu_slicer_format == 'ORCA':
                 color_counts = {}
@@ -330,8 +428,9 @@ class StandardExporter(BaseExporter):
                     object_element.attrib[self.attr("pid")] = str(colorgroup_id)
                     object_element.attrib[self.attr("pindex")] = "0"
                     most_common_material_list_index = colorgroup_id
-            else:
-                # Normal material handling
+            elif not has_textured_material:
+                # Normal material handling - but only if NOT using textured materials
+                # (textured materials use per-triangle pid to reference texture2dgroup)
                 if self.op.material_name_to_index:
                     material_indices = [
                         triangle.material_index for triangle in mesh.loop_triangles
@@ -368,6 +467,8 @@ class StandardExporter(BaseExporter):
                 self.op.vertex_colors,
                 mesh,
                 blender_object,
+                getattr(self.op, 'texture_groups', None),
+                str(self.op.material_resource_id) if self.op.material_resource_id else None,
             )
 
             # Write triangle sets if enabled

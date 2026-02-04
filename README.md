@@ -112,11 +112,18 @@ The 3MF spec requires consumers to fail hard on malformed files. In Blender, thi
 ### Extensions
 
 Supported 3MF extensions for improved slicer interoperability:
-| Extension                        | Namespace                                                         | Support |
-| -------------------------------- | ----------------------------------------------------------------- | ------- |
-| Core Materials (`basematerials`) | Core Spec v1.3.0                                                  | Full    |
-| Production Extension             | `http://schemas.microsoft.com/3dmanufacturing/production/2015/06` | Full    |
-| Materials Extension              | `http://schemas.microsoft.com/3dmanufacturing/material/2015/02`   | Partial |
+| Extension                        | Namespace                                                         | Support       |
+| -------------------------------- | ----------------------------------------------------------------- | ------------- |
+| Core Materials (`basematerials`) | Core Spec v1.3.0                                                  | Full          |
+| Production Extension             | `http://schemas.microsoft.com/3dmanufacturing/production/2015/06` | Full          |
+| Materials Extension v1.2.1       | `http://schemas.microsoft.com/3dmanufacturing/material/2015/02`   | Full (Active PBR) |
+
+**Materials Extension Features:**
+- **Colorgroups & Textures**: Full import/export with UV coordinates
+- **PBR Metallic**: Metallic/roughness values applied to Principled BSDF
+- **PBR Specular**: Specular color/glossiness mapped to Blender materials
+- **Translucent**: IOR, transmission, and attenuation for glass-like materials
+- **Round-trip**: All element types preserved for lossless re-export
 
 ---
 

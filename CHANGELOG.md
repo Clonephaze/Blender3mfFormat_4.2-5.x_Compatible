@@ -1,3 +1,29 @@
+1.3.0 — Textured PBR Materials
+====
+Complete implementation of textured PBR display properties from the 3MF Materials Extension v1.2.1, enabling full round-trip support for base color, roughness, and metallic texture maps.
+
+Features
+----
+* **Base Color Textures:** Import/export `basecolortextureid` from `<pbmetallictexturedisplayproperties>` with proper Principled BSDF node connections
+* **Roughness Textures:** Import/export `roughnesstextureid` with automatic Non-Color space assignment
+* **Metallic Textures:** Import/export `metallictextureid` with proper shader node setup
+* **Specular Workflow Textures:** Import/export `diffusetextureid`, `speculartextureid`, and `glossinesstextureid`
+* **Texture Extraction:** Automatic extraction and packing of texture images from 3MF archives
+
+Bug Fixes
+----
+* Fixed material reuse incorrectly matching default Blender materials when PBR textures were present
+* Fixed stale texture relationships in passthrough data causing export issues
+
+Technical
+----
+* Implements textured PBR display properties per 3MF Materials Extension v1.2.1 specification
+* Texture images packed into blend file for portability
+* Texture metadata preserved as custom properties for perfect round-trips
+* Note: Normal maps are exported to archive but cannot be imported (3MF spec has no `normaltextureid` attribute). Will re-visit this in the future.
+
+---
+
 1.2.7 — Full PBR Materials Extension Support
 ====
 Complete implementation of all three PBR workflows from the 3MF Materials and Properties Extension, bringing the add-on 1 step closer to full Material Extension support. 

@@ -26,6 +26,7 @@ from .constants import (
     RELS_NAMESPACES,
     MODEL_REL,
     THUMBNAIL_REL,
+    TEXTURE_REL,
     RELS_MIMETYPE,
     MODEL_MIMETYPE,
     RELS_NAMESPACE,
@@ -117,6 +118,12 @@ class Annotations:
             if (
                 namespace == MODEL_REL
             ):  # Don't store relationships that we will write ourselves.
+                continue
+            if (
+                namespace == TEXTURE_REL
+            ):  # Don't store texture relationships - we re-create them during export.
+                # This prevents stale texture relationships from previous imports from being preserved
+                # when they no longer correspond to actual texture files.
                 continue
 
             # Evaluate any relative URIs based on the path to this .rels file in the archive.
