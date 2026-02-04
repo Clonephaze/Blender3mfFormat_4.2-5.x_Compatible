@@ -275,18 +275,37 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
             ('ORIGIN', 'World Origin', 'Place objects at world origin (0,0,0)'),
             ('CURSOR', '3D Cursor', 'Place objects at 3D cursor position'),
             ('KEEP', 'Keep Original', 'Keep object positions from 3MF file'),
+            ('GRID', 'Grid Layout', 'Arrange multiple files in a grid pattern'),
         ],
         default='KEEP',
     )
-    origin_to_geometry: bpy.props.BoolProperty(
-        name="Origin to Geometry",
-        description="Set object origin to center of geometry after import",
-        default=False,
+    grid_spacing: bpy.props.FloatProperty(
+        name="Grid Spacing",
+        description="Gap between objects when using Grid Layout (in scene units)",
+        default=0.1,
+        min=0.0,
+        soft_max=10.0,
+    )
+    origin_to_geometry: bpy.props.EnumProperty(
+        name="Origin Placement",
+        description="How to set the object origin after import",
+        items=[
+            ('KEEP', 'Keep Original', 'Keep origin from 3MF file (typically corner)'),
+            ('CENTER', 'Center of Geometry', 'Move origin to center of bounding box'),
+            ('BOTTOM', 'Bottom Center', 'Move origin to bottom center (useful for placing on surfaces)'),
+        ],
+        default='KEEP',
     )
 
     def draw(self, context):
         """Draw the import options in the file browser."""
         layout = self.layout
+
+        # Show file count if multiple files selected
+        file_count = len(self.files) if self.files else 1
+        if file_count > 1:
+            info_box = layout.box()
+            info_box.label(text=f"Importing {file_count} files", icon='FILE_FOLDER')
 
         layout.prop(self, "global_scale")
         layout.separator()
@@ -300,6 +319,9 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         placement_box = layout.box()
         placement_box.label(text="Placement:", icon='OBJECT_ORIGIN')
         placement_box.prop(self, "import_location")
+        # Show grid spacing only when grid layout is selected
+        if self.import_location == 'GRID':
+            placement_box.prop(self, "grid_spacing")
         placement_box.prop(self, "origin_to_geometry")
 
     def invoke(self, context, event):
@@ -311,6 +333,8 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
             self.reuse_materials = prefs.preferences.default_reuse_materials
             self.import_location = prefs.preferences.default_import_location
             self.origin_to_geometry = prefs.preferences.default_origin_to_geometry
+            if hasattr(prefs.preferences, 'default_grid_spacing'):
+                self.grid_spacing = prefs.preferences.default_grid_spacing
         self.report({'INFO'}, "Importing, please wait...")
         return super().invoke(context, event)
 
@@ -359,6 +383,111 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
             if hasattr(window_manager, "status_text_set"):
                 window_manager.status_text_set(None)
         self._progress_context = None
+
+    def _apply_grid_layout(self) -> None:
+        """
+        Arrange imported objects in a grid pattern.
+
+        Objects are laid out in rows along the X axis, wrapping to new rows
+        along the Y axis. Spacing is determined by object bounding boxes
+        plus the grid_spacing gap.
+
+        If only one object was imported, it falls back to world origin placement.
+        """
+        objects = getattr(self, 'imported_objects', [])
+        if not objects:
+            return
+
+        # Fallback: single object goes to origin (already placed there)
+        if len(objects) == 1:
+            log.info("Grid layout: single object, placed at origin")
+            return
+
+        # Calculate bounding boxes for all objects
+        object_bounds = []
+        for obj in objects:
+            # Get world-space bounding box
+            bbox = [obj.matrix_world @ mathutils.Vector(corner) for corner in obj.bound_box]
+            min_corner = mathutils.Vector((
+                min(v.x for v in bbox),
+                min(v.y for v in bbox),
+                min(v.z for v in bbox)
+            ))
+            max_corner = mathutils.Vector((
+                max(v.x for v in bbox),
+                max(v.y for v in bbox),
+                max(v.z for v in bbox)
+            ))
+            size = max_corner - min_corner
+            object_bounds.append({
+                'obj': obj,
+                'size': size,
+                'min': min_corner,
+                'max': max_corner
+            })
+
+        # Calculate grid dimensions (roughly square layout)
+        import math
+        num_objects = len(objects)
+        cols = math.ceil(math.sqrt(num_objects))
+        rows = math.ceil(num_objects / cols)
+
+        spacing = getattr(self, 'grid_spacing', 0.1)
+
+        # Calculate column widths and row heights (max size in each)
+        col_widths = []
+        row_heights = []
+
+        for col in range(cols):
+            col_objs = [object_bounds[i] for i in range(col, num_objects, cols)]
+            if col_objs:
+                col_widths.append(max(b['size'].x for b in col_objs))
+            else:
+                col_widths.append(0)
+
+        for row in range(rows):
+            start_idx = row * cols
+            end_idx = min(start_idx + cols, num_objects)
+            row_objs = object_bounds[start_idx:end_idx]
+            if row_objs:
+                row_heights.append(max(b['size'].y for b in row_objs))
+            else:
+                row_heights.append(0)
+
+        # Position each object
+        current_y = 0.0
+        for row in range(rows):
+            current_x = 0.0
+            for col in range(cols):
+                idx = row * cols + col
+                if idx >= num_objects:
+                    break
+
+                bounds = object_bounds[idx]
+                obj = bounds['obj']
+
+                # Calculate center position for this cell
+                cell_center_x = current_x + col_widths[col] / 2
+                cell_center_y = current_y + row_heights[row] / 2
+
+                # Calculate object's current center offset from origin
+                obj_center_x = (bounds['min'].x + bounds['max'].x) / 2
+                obj_center_y = (bounds['min'].y + bounds['max'].y) / 2
+
+                # Move object so its center aligns with cell center
+                offset = mathutils.Vector((
+                    cell_center_x - obj_center_x,
+                    cell_center_y - obj_center_y,
+                    -bounds['min'].z  # Place on Z=0 plane
+                ))
+
+                obj.location += offset
+
+                current_x += col_widths[col] + spacing
+
+            current_y += row_heights[row] + spacing
+
+        log.info(f"Grid layout: arranged {num_objects} objects in {rows}x{cols} grid")
 
     def detect_vendor(self, root: xml.etree.ElementTree.Element) -> Optional[str]:
         """
@@ -411,6 +540,7 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
             self.resource_colorgroups = {}  # ID -> ResourceColorgroup (round-trip)
             self.resource_pbr_display_props = {}  # ID -> ResourcePBRDisplayProps (round-trip)
             self.num_loaded = 0
+            self.imported_objects = []  # Track all imported objects for grid layout
             self.vendor_format = None  # Will be set when we detect vendor-specific format
             self.extension_manager = ExtensionManager()  # Track active extensions
             scene_metadata = Metadata()
@@ -557,6 +687,10 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
             scene_metadata.store(bpy.context.scene)
             annotations.store()
             self._store_passthrough_materials()  # Store round-trip material data
+
+            # Apply grid layout if selected (works for multi-file or multi-object imports)
+            if self.import_location == 'GRID':
+                self._apply_grid_layout()
 
             # Zoom the camera to view the imported objects.
             for area in bpy.context.screen.areas:
@@ -2180,15 +2314,31 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
             bpy.context.view_layer.objects.active = blender_object
             blender_object.select_set(True)
 
-            # Set origin to geometry BEFORE applying transformation
-            if self.origin_to_geometry:
+            # Set origin placement BEFORE applying transformation
+            if self.origin_to_geometry in ('CENTER', 'BOTTOM'):
                 # Store current mode and switch to object mode
                 previous_mode = bpy.context.object.mode if bpy.context.object else 'OBJECT'
                 if previous_mode != 'OBJECT':
                     bpy.ops.object.mode_set(mode='OBJECT')
 
-                # Set origin to geometry center
-                bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='BOUNDS')
+                if self.origin_to_geometry == 'CENTER':
+                    # Set origin to geometry center
+                    bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='BOUNDS')
+                elif self.origin_to_geometry == 'BOTTOM':
+                    # Set origin to bottom center of bounding box
+                    # First get the bounding box in local space
+                    bbox = blender_object.bound_box
+                    min_z = min(v[2] for v in bbox)
+                    center_x = (min(v[0] for v in bbox) + max(v[0] for v in bbox)) / 2
+                    center_y = (min(v[1] for v in bbox) + max(v[1] for v in bbox)) / 2
+                    
+                    # Calculate offset from current origin to bottom center
+                    bottom_center = mathutils.Vector((center_x, center_y, min_z))
+                    
+                    # Move mesh data in opposite direction to effectively move origin
+                    mesh.transform(mathutils.Matrix.Translation(-bottom_center))
+                    # Update the object's location to compensate
+                    blender_object.location += bottom_center
 
                 # Restore previous mode
                 if previous_mode != 'OBJECT':
@@ -2202,9 +2352,16 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                 # Place at 3D cursor
                 cursor_location = bpy.context.scene.cursor.location
                 transformation.translation = cursor_location
+            elif self.import_location == 'GRID':
+                # Grid layout - place at origin initially, will be arranged later
+                transformation.translation = mathutils.Vector((0, 0, 0))
             # else 'KEEP' - use original transformation as-is
 
             blender_object.matrix_world = transformation
+
+            # Track for grid layout (only root objects, not parented components)
+            if parent is None and hasattr(self, 'imported_objects'):
+                self.imported_objects.append(blender_object)
 
             metadata.store(blender_object)
             # Higher precedence for per-resource metadata

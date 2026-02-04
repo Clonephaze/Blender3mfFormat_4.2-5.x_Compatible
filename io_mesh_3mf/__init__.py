@@ -34,6 +34,7 @@ from .import_3mf import Import3MF  # Imports 3MF files.
 __all__ = [
     "Export3MF",
     "Import3MF",
+    "ThreeMF_FH_import",
     "ThreeMFPreferences",
     "register",
     "unregister",
@@ -42,6 +43,31 @@ __all__ = [
 """
 Import and export 3MF files in Blender.
 """
+
+
+class ThreeMF_FH_import(bpy.types.FileHandler):
+    """
+    FileHandler for drag-and-drop import of 3MF files.
+
+    Enables users to drag .3mf files directly into Blender's 3D viewport
+    to import them. Supports multiple files at once.
+
+    Requires Blender 4.2+ (FileHandler API).
+    """
+    bl_idname = "IMPORT_FH_threemf"
+    bl_label = "3MF File Handler"
+    bl_import_operator = "import_mesh.threemf"
+    bl_file_extensions = ".3mf"
+
+    @classmethod
+    def poll_drop(cls, context):
+        """
+        Allow drops in the 3D viewport and outliner.
+
+        :param context: The current Blender context
+        :return: True if the drop should be handled
+        """
+        return context.area and context.area.type in {'VIEW_3D', 'OUTLINER'}
 
 
 class ThreeMFPreferences(bpy.types.AddonPreferences):
@@ -107,14 +133,29 @@ class ThreeMFPreferences(bpy.types.AddonPreferences):
             ('ORIGIN', 'World Origin', 'Place at world origin'),
             ('CURSOR', '3D Cursor', 'Place at 3D cursor'),
             ('KEEP', 'Keep Original', 'Keep positions from file'),
+            ('GRID', 'Grid Layout', 'Arrange files in a grid (for multi-file import)'),
         ],
         default='KEEP',
     )
 
-    default_origin_to_geometry: bpy.props.BoolProperty(
-        name="Origin to Geometry",
-        description="Set object origin to center of geometry after import by default",
-        default=False,
+    default_grid_spacing: bpy.props.FloatProperty(
+        name="Grid Spacing",
+        description="Spacing between objects when using Grid Layout placement (in scene units). "
+                    "Objects are arranged in a grid pattern with this gap between them",
+        default=0.1,
+        min=0.0,
+        soft_max=10.0,
+    )
+
+    default_origin_to_geometry: bpy.props.EnumProperty(
+        name="Origin Placement",
+        description="How to set the object origin after import",
+        items=[
+            ('KEEP', 'Keep Original', 'Keep origin from 3MF file (typically corner)'),
+            ('CENTER', 'Center of Geometry', 'Move origin to center of bounding box'),
+            ('BOTTOM', 'Bottom Center', 'Move origin to bottom center (useful for placing on surfaces)'),
+        ],
+        default='KEEP',
     )
 
     default_multi_material_export: bpy.props.BoolProperty(
@@ -164,6 +205,9 @@ class ThreeMFPreferences(bpy.types.AddonPreferences):
         col.separator()
         col.label(text="Placement:", icon='OBJECT_ORIGIN')
         col.prop(self, "default_import_location")
+        # Show grid spacing only when grid layout is selected
+        if self.default_import_location == 'GRID':
+            col.prop(self, "default_grid_spacing")
         col.prop(self, "default_origin_to_geometry")
 
 
@@ -181,7 +225,7 @@ def menu_export(self, _) -> None:
     self.layout.operator(Export3MF.bl_idname, text="3D Manufacturing Format (.3mf)")
 
 
-classes = (ThreeMFPreferences, Import3MF, Export3MF)
+classes = (ThreeMFPreferences, Import3MF, Export3MF, ThreeMF_FH_import)
 
 
 def register() -> None:

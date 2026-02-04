@@ -1,3 +1,11 @@
+1.3.1 — Drag & Drop Import
+====
+Features
+----
+* Drag & drop .3mf files directly into Blenders viewport
+* Grid Layout: arrange imported objects in a grid
+* Origin Placement: choose original, center, or bottom center
+
 1.3.0 — Textured PBR Materials
 ====
 Complete implementation of textured PBR display properties from the 3MF Materials Extension v1.2.1, enabling full round-trip support for base color, roughness, and metallic texture maps.
