@@ -19,13 +19,20 @@ Features and improvements organized by priority. Complexity ratings help with pl
 
 ## 📦 3MF Extensions
 
-### Materials Extension
+### Materials Extension v1.2.1
 > `http://schemas.microsoft.com/3dmanufacturing/material/2015/02`
 
 | Status | Feature | Complexity | Description |
 |--------|---------|------------|-------------|
-| 📋 | Color Groups | 🟡 | `<colorgroup>` — similar structure to basematerials |
-| 📋 | Texture 2D | 🔴 | UV-mapped textures with embedded images |
+| ✅ | Full Passthrough Support | 🟡 | All element types preserved for round-trip |
+| ✅ | Color Groups | 🟡 | `<colorgroup>` with color arrays |
+| ✅ | Texture 2D / 2D Groups | 🔴 | Texture definitions with UV coordinates |
+| ✅ | Composite Materials | 🟡 | Material blending definitions |
+| ✅ | Multiproperties | 🟡 | Multiple property assignments |
+| ✅ | Active PBR Metallic | 🟡 | Metallic/roughness applied to Principled BSDF |
+| ✅ | Active PBR Specular | 🟡 | Specular/glossiness applied to Principled BSDF |
+| ✅ | Active Translucent | 🟡 | IOR/transmission/attenuation applied to glass materials |
+| ✅ | Textured PBR Display | 🔴 | Full node setup with metallic/roughness texture maps |
 
 ### Triangle Sets Extension
 > `http://schemas.microsoft.com/3dmanufacturing/trianglesets/2021/07`

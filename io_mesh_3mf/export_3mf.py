@@ -18,11 +18,10 @@ This module contains the main Export3MF operator that handles the UI and dispatc
 to format-specific exporters (Standard, Orca Slicer, PrusaSlicer).
 """
 
-import itertools
 import logging
 import mathutils
 import zipfile
-from typing import Optional, Set, Dict, List
+from typing import Optional, Set, Dict
 
 import bpy
 import bpy.props
@@ -30,7 +29,6 @@ import bpy.types
 import bpy_extras.io_utils
 import bpy_extras.node_shader_utils
 
-from .constants import MODEL_NAMESPACE
 from .extensions import ExtensionManager
 from .export_utils import (
     create_archive as _create_archive,
@@ -334,7 +332,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         Returns just the name_to_index dict for backward compatibility.
         Updates self.next_resource_id and self.material_resource_id internally.
         """
-        name_to_index, self.next_resource_id, self.material_resource_id = _write_materials(
+        name_to_index, self.next_resource_id, self.material_resource_id, _ = _write_materials(
             resources_element,
             blender_objects,
             self.use_orca_format,
@@ -361,7 +359,9 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             getattr(self, 'mmu_slicer_format', 'ORCA'),
             self.vertex_colors,
             mesh,
-            blender_object
+            blender_object,
+            getattr(self, 'texture_groups', None),
+            str(self.material_resource_id) if hasattr(self, 'material_resource_id') and self.material_resource_id else None,
         )
 
     def write_objects(self, root, resources_element, blender_objects, global_scale: float) -> None:

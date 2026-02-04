@@ -19,6 +19,7 @@ import base64
 import collections
 import datetime
 import itertools
+import json
 import logging
 import os
 import tempfile
@@ -40,6 +41,10 @@ from .constants import (
     DC_NAMESPACE,
     DCTERMS_NAMESPACE,
     TRIANGLE_SETS_NAMESPACE,
+    TEXTURE_MIMETYPE_PNG,
+    TEXTURE_MIMETYPE_JPEG,
+    TEXTURE_REL,
+    RELS_NAMESPACE,
     conflicting_mustpreserve_contents,
 )
 from .metadata import Metadata
@@ -163,6 +168,11 @@ def write_thumbnail(archive: zipfile.ZipFile) -> None:
     :param archive: The 3MF archive to write the thumbnail into.
     """
     try:
+        # Skip thumbnail generation in background mode (no OpenGL context)
+        if bpy.app.background:
+            log.debug("Skipping thumbnail generation in background mode")
+            return
+
         # Thumbnail dimensions (3MF spec recommends these sizes)
         thumb_width = 256
         thumb_height = 256
@@ -416,7 +426,7 @@ def write_materials(resources_element: xml.etree.ElementTree.Element,
                     use_orca_format: bool,
                     vertex_colors: Dict[str, int],
                     next_resource_id: int,
-                    export_pbr: bool = True) -> Tuple[Dict[str, int], int, str]:
+                    export_pbr: bool = True) -> Tuple[Dict[str, int], int, str, Optional[xml.etree.ElementTree.Element]]:
     """
     Write the materials on the specified blender objects to a 3MF document.
 
@@ -431,7 +441,7 @@ def write_materials(resources_element: xml.etree.ElementTree.Element,
     :param vertex_colors: Dictionary of color hex to index for Orca mode.
     :param next_resource_id: Next available resource ID.
     :param export_pbr: Whether to export PBR display properties (default True).
-    :return: Tuple of (name_to_index mapping, updated next_resource_id, material_resource_id).
+    :return: Tuple of (name_to_index mapping, updated next_resource_id, material_resource_id, basematerials_element).
     """
     name_to_index = {}
     next_index = 0
@@ -470,7 +480,7 @@ def write_materials(resources_element: xml.etree.ElementTree.Element,
             name_to_index[color_hex] = colorgroup_id
 
         log.info(f"Created {len(sorted_colors)} colorgroups for Orca: {name_to_index}")
-        return name_to_index, next_resource_id, material_resource_id
+        return name_to_index, next_resource_id, material_resource_id, None
 
     # Collect PBR data for all materials first
     pbr_materials = []  # List of (material_name, pbr_data_dict)
@@ -536,7 +546,7 @@ def write_materials(resources_element: xml.etree.ElementTree.Element,
             pbr_materials, next_resource_id
         )
 
-    return name_to_index, next_resource_id, material_resource_id
+    return name_to_index, next_resource_id, material_resource_id, basematerials_element
 
 
 def _extract_pbr_from_material(material: bpy.types.Material,
@@ -841,6 +851,696 @@ def _write_pbr_display_properties(resources_element: xml.etree.ElementTree.Eleme
     return next_resource_id
 
 
+# =============================================================================
+# Texture Export (3MF Materials Extension)
+# =============================================================================
+
+def detect_textured_materials(blender_objects: List[bpy.types.Object]) -> Dict[str, Dict]:
+    """
+    Detect materials with Image Texture nodes connected to Base Color.
+
+    Returns a dictionary of material name -> texture info:
+    {
+        "material_name": {
+            "image": bpy.types.Image,
+            "tilestyleu": str,
+            "tilestylev": str,
+            "filter": str,
+            "original_path": str  # from custom property if imported
+        }
+    }
+    """
+    textured_materials = {}
+
+    for blender_object in blender_objects:
+        for material_slot in blender_object.material_slots:
+            material = material_slot.material
+            if material is None or not material.use_nodes:
+                continue
+
+            material_name = str(material.name)
+            if material_name in textured_materials:
+                continue
+
+            # Find Image Texture node connected to Principled BSDF Base Color
+            image_info = _find_base_color_texture(material)
+            if image_info:
+                textured_materials[material_name] = image_info
+                log.debug(f"Detected textured material: {material_name}")
+
+    return textured_materials
+
+
+def _find_base_color_texture(material: bpy.types.Material) -> Optional[Dict]:
+    """
+    Find Image Texture node connected to Principled BSDF Base Color input.
+
+    :param material: Blender material to analyze
+    :return: Dict with image info, or None if not found
+    """
+    if not material.node_tree:
+        return None
+
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+
+    # Find Principled BSDF node
+    principled = None
+    for node in nodes:
+        if node.type == 'BSDF_PRINCIPLED':
+            principled = node
+            break
+
+    if not principled:
+        return None
+
+    # Check Base Color input for image texture
+    base_color_input = principled.inputs.get('Base Color')
+    if not base_color_input or not base_color_input.is_linked:
+        return None
+
+    # Trace back to find Image Texture node
+    for link in links:
+        if link.to_socket == base_color_input:
+            from_node = link.from_node
+            if from_node.type == 'TEX_IMAGE' and from_node.image:
+                image = from_node.image
+
+                # Determine tile style from extension mode
+                extension = getattr(from_node, 'extension', 'REPEAT')
+                if extension == 'CLIP':
+                    tilestyleu = "clamp"
+                    tilestylev = "clamp"
+                elif extension == 'EXTEND':
+                    tilestyleu = "mirror"  # Closest approximation
+                    tilestylev = "mirror"
+                else:
+                    tilestyleu = "wrap"
+                    tilestylev = "wrap"
+
+                # Check for stored metadata from import
+                tilestyleu = material.get("3mf_texture_tilestyleu", tilestyleu)
+                tilestylev = material.get("3mf_texture_tilestylev", tilestylev)
+                filter_mode = material.get("3mf_texture_filter", "auto")
+                original_path = material.get("3mf_texture_path", "")
+
+                # Determine filter from interpolation
+                interpolation = getattr(from_node, 'interpolation', 'Linear')
+                if interpolation == 'Closest':
+                    filter_mode = "nearest"
+                elif filter_mode not in ("linear", "nearest"):
+                    filter_mode = "auto"
+
+                return {
+                    "image": image,
+                    "tilestyleu": tilestyleu,
+                    "tilestylev": tilestylev,
+                    "filter": filter_mode,
+                    "original_path": original_path,
+                }
+
+    return None
+
+
+def _find_texture_from_input(material: bpy.types.Material,
+                              input_name: str,
+                              non_color: bool = False) -> Optional[Dict]:
+    """
+    Find Image Texture node connected to a specific Principled BSDF input.
+
+    :param material: Blender material to analyze
+    :param input_name: Name of the Principled BSDF input (e.g., 'Roughness', 'Metallic')
+    :param non_color: Whether this texture should be non-color data
+    :return: Dict with image info, or None if not found
+    """
+    if not material.node_tree:
+        return None
+
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+
+    # Find Principled BSDF node
+    principled = None
+    for node in nodes:
+        if node.type == 'BSDF_PRINCIPLED':
+            principled = node
+            break
+
+    if not principled:
+        return None
+
+    # Check the specified input for image texture
+    target_input = principled.inputs.get(input_name)
+    if not target_input or not target_input.is_linked:
+        return None
+
+    # Trace back to find Image Texture node (may go through other nodes)
+    def trace_to_image_texture(socket, depth=0):
+        """Recursively trace back through nodes to find Image Texture."""
+        if depth > 10:  # Prevent infinite loops
+            return None
+        for link in links:
+            if link.to_socket == socket:
+                from_node = link.from_node
+                if from_node.type == 'TEX_IMAGE' and from_node.image:
+                    return from_node
+                # Check if we can trace through this node (e.g., Normal Map, Invert)
+                if from_node.inputs:
+                    # Try common input names
+                    for input_sock in from_node.inputs:
+                        if input_sock.is_linked:
+                            result = trace_to_image_texture(input_sock, depth + 1)
+                            if result:
+                                return result
+        return None
+
+    tex_node = trace_to_image_texture(target_input)
+    if not tex_node:
+        return None
+
+    image = tex_node.image
+
+    # Determine tile style from extension mode
+    extension = getattr(tex_node, 'extension', 'REPEAT')
+    if extension == 'CLIP':
+        tilestyleu = "clamp"
+        tilestylev = "clamp"
+    elif extension == 'EXTEND':
+        tilestyleu = "mirror"  # Closest approximation
+        tilestylev = "mirror"
+    else:
+        tilestyleu = "wrap"
+        tilestylev = "wrap"
+
+    # Determine filter from interpolation
+    interpolation = getattr(tex_node, 'interpolation', 'Linear')
+    if interpolation == 'Closest':
+        filter_mode = "nearest"
+    else:
+        filter_mode = "auto"
+
+    return {
+        "image": image,
+        "tilestyleu": tilestyleu,
+        "tilestylev": tilestylev,
+        "filter": filter_mode,
+        "non_color": non_color,
+    }
+
+
+def detect_pbr_textured_materials(blender_objects: List[bpy.types.Object]) -> Dict[str, Dict]:
+    """
+    Detect materials with PBR texture nodes connected to Principled BSDF.
+
+    Detects textures connected to:
+    - Base Color
+    - Roughness
+    - Metallic
+    - Normal (through Normal Map node)
+
+    Returns a dictionary of material name -> PBR texture info:
+    {
+        "material_name": {
+            "base_color": {image info dict},     # or None
+            "roughness": {image info dict},       # or None
+            "metallic": {image info dict},        # or None
+            "normal": {image info dict},          # or None
+        }
+    }
+    """
+    pbr_materials = {}
+
+    for blender_object in blender_objects:
+        for material_slot in blender_object.material_slots:
+            material = material_slot.material
+            if material is None or not material.use_nodes:
+                continue
+
+            material_name = str(material.name)
+            if material_name in pbr_materials:
+                continue
+
+            # Check for PBR textures
+            base_color = _find_base_color_texture(material)
+            roughness = _find_texture_from_input(material, 'Roughness', non_color=True)
+            metallic = _find_texture_from_input(material, 'Metallic', non_color=True)
+            normal = _find_texture_from_input(material, 'Normal', non_color=True)
+
+            # Only include if at least one texture is found
+            if base_color or roughness or metallic or normal:
+                pbr_materials[material_name] = {
+                    "base_color": base_color,
+                    "roughness": roughness,
+                    "metallic": metallic,
+                    "normal": normal,
+                }
+                texture_types = [t for t in ["base_color", "roughness", "metallic", "normal"]
+                                 if pbr_materials[material_name][t]]
+                log.debug(f"Detected PBR material '{material_name}' with textures: {texture_types}")
+
+    return pbr_materials
+
+
+def write_textures_to_archive(archive: zipfile.ZipFile,
+                               textured_materials: Dict[str, Dict]) -> Dict[str, str]:
+    """
+    Write texture images to the 3MF archive.
+
+    :param archive: The 3MF zip archive
+    :param textured_materials: Dict from detect_textured_materials()
+    :return: Dict mapping image name -> archive path (e.g. "/3D/Texture/image.png")
+    """
+    image_to_path = {}
+    texture_folder = "3D/Texture"
+
+    for mat_name, tex_info in textured_materials.items():
+        image = tex_info["image"]
+        image_name = str(image.name)
+
+        # Skip if already written
+        if image_name in image_to_path:
+            continue
+
+        # Determine output format and path
+        # Prefer original format if available, otherwise use PNG
+        original_path = tex_info.get("original_path", "")
+        if original_path and original_path.lower().endswith('.jpg'):
+            ext = ".jpg"
+        elif original_path and original_path.lower().endswith('.jpeg'):
+            ext = ".jpeg"
+        else:
+            ext = ".png"
+
+        # Sanitize filename
+        safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in image_name)
+        if not safe_name.lower().endswith(ext):
+            safe_name += ext
+
+        archive_path = f"{texture_folder}/{safe_name}"
+        full_archive_path = f"/{archive_path}"
+
+        try:
+            # Save image to temporary file, then add to archive
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                tmp_path = tmp.name
+
+            # Determine format for save
+            if ext in (".jpg", ".jpeg"):
+                file_format = 'JPEG'
+            else:
+                file_format = 'PNG'
+
+            # Save image
+            original_filepath = image.filepath_raw
+            image.filepath_raw = tmp_path
+            image.file_format = file_format
+            image.save()
+            image.filepath_raw = original_filepath
+
+            # Add to archive
+            archive.write(tmp_path, archive_path)
+            os.unlink(tmp_path)
+
+            image_to_path[image_name] = full_archive_path
+            log.info(f"Wrote texture '{image_name}' to {archive_path}")
+
+        except Exception as e:
+            log.warning(f"Failed to write texture '{image_name}': {e}")
+            # Try alternative: if image is packed, write from packed data
+            if image.packed_file:
+                try:
+                    archive.writestr(archive_path, image.packed_file.data)
+                    image_to_path[image_name] = full_archive_path
+                    log.info(f"Wrote packed texture '{image_name}' to {archive_path}")
+                except Exception as e2:
+                    log.error(f"Failed to write packed texture '{image_name}': {e2}")
+
+    return image_to_path
+
+
+def write_texture_relationships(archive: zipfile.ZipFile,
+                                 image_to_path: Dict[str, str]) -> None:
+    """
+    Write the model's relationship file to declare texture resources.
+
+    According to the 3MF spec and OPC conventions, textures should be declared
+    as relationships in 3D/_rels/3dmodel.model.rels.
+
+    :param archive: The 3MF zip archive
+    :param image_to_path: Dict mapping image name -> archive path
+    """
+    if not image_to_path:
+        return
+
+    # Create relationships XML
+    relationships_element = xml.etree.ElementTree.Element(
+        f"{{{RELS_NAMESPACE}}}Relationships"
+    )
+
+    # Add a relationship for each texture
+    rel_id = 1
+    for image_name, archive_path in image_to_path.items():
+        rel_element = xml.etree.ElementTree.SubElement(
+            relationships_element,
+            f"{{{RELS_NAMESPACE}}}Relationship"
+        )
+        rel_element.attrib["Type"] = TEXTURE_REL
+        rel_element.attrib["Target"] = archive_path
+        rel_element.attrib["Id"] = f"rel{rel_id}"
+        rel_id += 1
+
+    # Write to archive at 3D/_rels/3dmodel.model.rels
+    rels_path = "3D/_rels/3dmodel.model.rels"
+    tree = xml.etree.ElementTree.ElementTree(relationships_element)
+    with archive.open(rels_path, "w") as f:
+        tree.write(
+            f,
+            xml_declaration=True,
+            encoding="UTF-8",
+        )
+
+    log.info(f"Wrote {len(image_to_path)} texture relationships to {rels_path}")
+
+
+def write_texture_resources(resources_element: xml.etree.ElementTree.Element,
+                            textured_materials: Dict[str, Dict],
+                            image_to_path: Dict[str, str],
+                            next_resource_id: int,
+                            precision: int = 6) -> Tuple[Dict[str, int], int]:
+    """
+    Write texture2d and texture2dgroup elements for textured materials.
+
+    :param resources_element: The <resources> element
+    :param textured_materials: Dict from detect_textured_materials()
+    :param image_to_path: Dict from write_textures_to_archive()
+    :param next_resource_id: Next available resource ID
+    :param precision: Decimal places for UV coordinates
+    :return: Tuple of (material_name -> texture_group_id mapping, updated next_resource_id)
+    """
+    material_to_texture_group = {}
+
+    # Track written textures (image path -> texture2d ID)
+    texture_ids = {}
+
+    for mat_name, tex_info in textured_materials.items():
+        image = tex_info["image"]
+        image_name = str(image.name)
+
+        if image_name not in image_to_path:
+            continue
+
+        archive_path = image_to_path[image_name]
+
+        # Write texture2d element if not already written for this image
+        if archive_path not in texture_ids:
+            texture_id = str(next_resource_id)
+            next_resource_id += 1
+
+            # Determine content type
+            if archive_path.lower().endswith(('.jpg', '.jpeg')):
+                contenttype = TEXTURE_MIMETYPE_JPEG
+            else:
+                contenttype = TEXTURE_MIMETYPE_PNG
+
+            texture_attrib = {
+                "id": texture_id,
+                "path": archive_path,
+                "contenttype": contenttype,
+            }
+
+            # Add optional tile style attributes if not default
+            if tex_info["tilestyleu"] != "wrap":
+                texture_attrib["tilestyleu"] = tex_info["tilestyleu"]
+            if tex_info["tilestylev"] != "wrap":
+                texture_attrib["tilestylev"] = tex_info["tilestylev"]
+            if tex_info["filter"] != "auto":
+                texture_attrib["filter"] = tex_info["filter"]
+
+            xml.etree.ElementTree.SubElement(
+                resources_element,
+                f"{{{MATERIAL_NAMESPACE}}}texture2d",
+                attrib=texture_attrib,
+            )
+            texture_ids[archive_path] = texture_id
+            log.debug(f"Created texture2d ID {texture_id} for {archive_path}")
+
+        # Create texture2dgroup for this material
+        # Note: tex2coord elements will be added when writing triangles
+        texture2d_id = texture_ids[archive_path]
+        group_id = str(next_resource_id)
+        next_resource_id += 1
+
+        group_element = xml.etree.ElementTree.SubElement(
+            resources_element,
+            f"{{{MATERIAL_NAMESPACE}}}texture2dgroup",
+            attrib={
+                "id": group_id,
+                "texid": texture2d_id,
+            },
+        )
+
+        # Store for later tex2coord population
+        material_to_texture_group[mat_name] = {
+            "group_id": group_id,
+            "group_element": group_element,
+            "tex2coords": {},  # UV tuple -> index mapping
+            "next_index": 0,
+            "precision": precision,
+        }
+        log.debug(f"Created texture2dgroup ID {group_id} for material {mat_name}")
+
+    return material_to_texture_group, next_resource_id
+
+
+def get_or_create_tex2coord(texture_group_data: Dict, u: float, v: float) -> int:
+    """
+    Get or create a tex2coord index for a UV coordinate.
+
+    :param texture_group_data: Dict with tex2coords mapping and group_element
+    :param u: U texture coordinate
+    :param v: V texture coordinate
+    :return: Index of the tex2coord in the texture2dgroup
+    """
+    precision = texture_group_data.get("precision", 6)
+    # Round UV to precision for deduplication
+    u_rounded = round(u, precision)
+    v_rounded = round(v, precision)
+    uv_key = (u_rounded, v_rounded)
+
+    if uv_key in texture_group_data["tex2coords"]:
+        return texture_group_data["tex2coords"][uv_key]
+
+    # Create new tex2coord element
+    index = texture_group_data["next_index"]
+    texture_group_data["next_index"] = index + 1
+
+    xml.etree.ElementTree.SubElement(
+        texture_group_data["group_element"],
+        f"{{{MATERIAL_NAMESPACE}}}tex2coord",
+        attrib={
+            "u": f"{u_rounded:.{precision}g}",
+            "v": f"{v_rounded:.{precision}g}",
+        },
+    )
+
+    texture_group_data["tex2coords"][uv_key] = index
+    return index
+
+
+def write_pbr_textures_to_archive(archive: zipfile.ZipFile,
+                                   pbr_materials: Dict[str, Dict]) -> Dict[str, str]:
+    """
+    Write ALL PBR texture images (base_color, roughness, metallic, normal) to the 3MF archive.
+
+    For materials with PBR textures (roughness/metallic), all textures including base color
+    should go through pbmetallictexturedisplayproperties, not texture2dgroup.
+
+    :param archive: The 3MF zip archive
+    :param pbr_materials: Dict from detect_pbr_textured_materials()
+    :return: Dict mapping image name -> archive path
+    """
+    image_to_path = {}
+    texture_folder = "3D/Texture"
+
+    # Collect all unique images from all PBR channels (including base_color)
+    for mat_name, pbr_info in pbr_materials.items():
+        # Only process materials that have roughness or metallic textures
+        # These are the ones that will use pbmetallictexturedisplayproperties
+        if not pbr_info.get('roughness') and not pbr_info.get('metallic'):
+            continue
+
+        # Include base_color along with PBR channels
+        for channel in ['base_color', 'roughness', 'metallic', 'normal']:
+            tex_info = pbr_info.get(channel)
+            if not tex_info:
+                continue
+
+            image = tex_info["image"]
+            image_name = str(image.name)
+
+            if image_name in image_to_path:
+                continue
+
+            # Determine output format - PBR textures typically stay as-is
+            ext = ".png"
+            if image.filepath_raw:
+                if image.filepath_raw.lower().endswith(('.jpg', '.jpeg')):
+                    ext = ".jpg"
+
+            # Sanitize filename
+            safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in image_name)
+            if not safe_name.lower().endswith(ext):
+                safe_name += ext
+
+            archive_path = f"{texture_folder}/{safe_name}"
+            full_archive_path = f"/{archive_path}"
+
+            try:
+                # Save image to temporary file, then add to archive
+                with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                    tmp_path = tmp.name
+
+                file_format = 'JPEG' if ext in (".jpg", ".jpeg") else 'PNG'
+
+                original_filepath = image.filepath_raw
+                image.filepath_raw = tmp_path
+                image.file_format = file_format
+                image.save()
+                image.filepath_raw = original_filepath
+
+                archive.write(tmp_path, archive_path)
+                os.unlink(tmp_path)
+
+                image_to_path[image_name] = full_archive_path
+                log.info(f"Wrote PBR texture '{image_name}' to {archive_path}")
+
+            except Exception as e:
+                log.warning(f"Failed to write PBR texture '{image_name}': {e}")
+                # Try packed data if available
+                if image.packed_file:
+                    try:
+                        archive.writestr(archive_path, image.packed_file.data)
+                        image_to_path[image_name] = full_archive_path
+                        log.info(f"Wrote packed PBR texture '{image_name}' to {archive_path}")
+                    except Exception as e2:
+                        log.error(f"Failed to write packed PBR texture '{image_name}': {e2}")
+
+    return image_to_path
+
+
+def write_pbr_texture_display_properties(resources_element: xml.etree.ElementTree.Element,
+                                          pbr_materials: Dict[str, Dict],
+                                          image_to_path: Dict[str, str],
+                                          next_resource_id: int,
+                                          basematerials_element: Optional[xml.etree.ElementTree.Element] = None) -> Tuple[Dict[str, str], int]:
+    """
+    Write pbmetallictexturedisplayproperties elements for PBR materials.
+
+    Creates texture2d resources for ALL PBR textures (base color, roughness, metallic)
+    and links them via pbmetallictexturedisplayproperties.
+
+    Per 3MF Materials Extension spec, pbmetallictexturedisplayproperties supports:
+    - basecolortextureid: texture for base color (replaces texture2dgroup approach)
+    - metallictextureid: texture for metallic
+    - roughnesstextureid: texture for roughness
+
+    :param resources_element: The <resources> element
+    :param pbr_materials: Dict from detect_pbr_textured_materials()
+    :param image_to_path: Dict mapping image name -> archive path
+    :param next_resource_id: Next available resource ID
+    :param basematerials_element: Optional basematerials element to link via displaypropertiesid
+    :return: Tuple of (material_name -> display_props_id mapping, updated next_resource_id)
+    """
+    material_to_display_props = {}
+    texture_ids = {}  # image path -> texture2d ID
+    first_display_props_id = None  # Track first ID for basematerials linkage
+
+    def get_or_create_texture2d(tex_info: Optional[Dict], tex_type: str) -> str:
+        """Helper to create texture2d resource and return its ID."""
+        nonlocal next_resource_id
+        
+        if not tex_info or not tex_info.get('image'):
+            return ""
+        
+        image_name = str(tex_info['image'].name)
+        archive_path = image_to_path.get(image_name)
+        if not archive_path:
+            return ""
+        
+        if archive_path not in texture_ids:
+            tex_id = str(next_resource_id)
+            next_resource_id += 1
+
+            contenttype = TEXTURE_MIMETYPE_JPEG if archive_path.lower().endswith(('.jpg', '.jpeg')) else TEXTURE_MIMETYPE_PNG
+
+            xml.etree.ElementTree.SubElement(
+                resources_element,
+                f"{{{MATERIAL_NAMESPACE}}}texture2d",
+                attrib={
+                    "id": tex_id,
+                    "path": archive_path,
+                    "contenttype": contenttype,
+                },
+            )
+            texture_ids[archive_path] = tex_id
+            log.debug(f"Created texture2d ID {tex_id} for {tex_type}: {archive_path}")
+
+        return texture_ids[archive_path]
+
+    for mat_name, pbr_info in pbr_materials.items():
+        base_color_tex = pbr_info.get('base_color')
+        roughness_tex = pbr_info.get('roughness')
+        metallic_tex = pbr_info.get('metallic')
+
+        # Only create pbmetallictexturedisplayproperties if we have PBR textures
+        # (roughness or metallic). Base color alone uses texture2dgroup.
+        if not roughness_tex and not metallic_tex:
+            continue
+
+        # Create texture2d resources for each texture type
+        basecolor_texid = get_or_create_texture2d(base_color_tex, "base_color")
+        roughness_texid = get_or_create_texture2d(roughness_tex, "roughness")
+        metallic_texid = get_or_create_texture2d(metallic_tex, "metallic")
+
+        # Create pbmetallictexturedisplayproperties with all available textures
+        display_props_id = str(next_resource_id)
+        next_resource_id += 1
+
+        if first_display_props_id is None:
+            first_display_props_id = display_props_id
+
+        attrib = {
+            "id": display_props_id,
+            "name": mat_name,
+        }
+        if basecolor_texid:
+            attrib["basecolortextureid"] = basecolor_texid
+        if metallic_texid:
+            attrib["metallictextureid"] = metallic_texid
+        if roughness_texid:
+            attrib["roughnesstextureid"] = roughness_texid
+
+        xml.etree.ElementTree.SubElement(
+            resources_element,
+            f"{{{MATERIAL_NAMESPACE}}}pbmetallictexturedisplayproperties",
+            attrib=attrib,
+        )
+
+        material_to_display_props[mat_name] = display_props_id
+        log.info(f"Created pbmetallictexturedisplayproperties ID {display_props_id} for '{mat_name}' "
+                f"(basecolor={basecolor_texid or 'none'}, roughness={roughness_texid or 'none'}, "
+                f"metallic={metallic_texid or 'none'})")
+
+    # Link basematerials to display properties
+    # Note: 3MF spec allows only ONE displaypropertiesid per basematerials
+    # Textured PBR takes priority over scalar PBR
+    if first_display_props_id and basematerials_element is not None:
+        basematerials_element.set("displaypropertiesid", first_display_props_id)
+        log.info(f"Linked basematerials to pbmetallictexturedisplayproperties ID {first_display_props_id}")
+
+    return material_to_display_props, next_resource_id
+
+
 def write_prusa_filament_colors(archive: zipfile.ZipFile, vertex_colors: Dict[str, int]) -> None:
     """
     Write filament color mapping for PrusaSlicer MMU export.
@@ -871,6 +1571,527 @@ def write_prusa_filament_colors(archive: zipfile.ZipFile, vertex_colors: Dict[st
             log.info(f"Wrote {len(color_lines)} filament colors to metadata")
     except Exception as e:
         log.warning(f"Failed to write filament colors: {e}")
+
+
+# =============================================================================
+# Passthrough Materials - Round-trip Support
+# =============================================================================
+
+def write_passthrough_materials(resources_element: xml.etree.ElementTree.Element,
+                                 next_resource_id: int) -> Tuple[int, bool]:
+    """
+    Write stored passthrough material data from scene custom properties.
+
+    This writes back compositematerials, multiproperties, textured PBR
+    display properties, colorgroups, and non-textured PBR display properties
+    that were imported but not visually interpreted.
+
+    IDs are remapped to avoid conflicts with newly created materials.
+
+    :param resources_element: The <resources> element
+    :param next_resource_id: Next available resource ID
+    :return: Tuple of (updated next_resource_id, whether any passthrough data was written)
+    """
+    scene = bpy.context.scene
+    any_written = False
+
+    # Check if any passthrough data exists
+    has_composites = bool(scene.get("3mf_compositematerials"))
+    has_multiprops = bool(scene.get("3mf_multiproperties"))
+    has_pbr_tex = bool(scene.get("3mf_pbr_texture_displays"))
+    has_colorgroups = bool(scene.get("3mf_colorgroups"))
+    has_pbr_display = bool(scene.get("3mf_pbr_display_props"))
+    has_textures = bool(scene.get("3mf_textures"))
+    has_tex_groups = bool(scene.get("3mf_texture_groups"))
+
+    if (has_composites or has_multiprops or has_pbr_tex or has_colorgroups
+            or has_pbr_display or has_textures or has_tex_groups):
+        any_written = True
+    else:
+        return next_resource_id, False
+
+    # Build ID remap table: original_id -> new_id
+    # This prevents conflicts with newly created materials
+    # Only remap IDs that would conflict with IDs < next_resource_id
+    id_remap = {}
+    
+    # Collect all original IDs that need remapping
+    original_ids = set()
+    
+    if has_textures:
+        try:
+            tex_data = json.loads(scene.get("3mf_textures", "{}"))
+            original_ids.update(tex_data.keys())
+        except json.JSONDecodeError:
+            pass
+    
+    if has_tex_groups:
+        try:
+            group_data = json.loads(scene.get("3mf_texture_groups", "{}"))
+            original_ids.update(group_data.keys())
+        except json.JSONDecodeError:
+            pass
+    
+    if has_colorgroups:
+        try:
+            cg_data = json.loads(scene.get("3mf_colorgroups", "{}"))
+            original_ids.update(cg_data.keys())
+        except json.JSONDecodeError:
+            pass
+    
+    if has_pbr_display:
+        try:
+            pbr_data = json.loads(scene.get("3mf_pbr_display_props", "{}"))
+            original_ids.update(pbr_data.keys())
+        except json.JSONDecodeError:
+            pass
+    
+    if has_composites:
+        try:
+            comp_data = json.loads(scene.get("3mf_compositematerials", "{}"))
+            original_ids.update(comp_data.keys())
+        except json.JSONDecodeError:
+            pass
+    
+    if has_multiprops:
+        try:
+            mp_data = json.loads(scene.get("3mf_multiproperties", "{}"))
+            original_ids.update(mp_data.keys())
+        except json.JSONDecodeError:
+            pass
+    
+    if has_pbr_tex:
+        try:
+            pbr_tex_data = json.loads(scene.get("3mf_pbr_texture_displays", "{}"))
+            original_ids.update(pbr_tex_data.keys())
+        except json.JSONDecodeError:
+            pass
+    
+    # Find IDs that would conflict with newly created materials (IDs 1 to next_resource_id-1)
+    conflicting_ids = set()
+    for orig_id in original_ids:
+        try:
+            id_int = int(orig_id)
+            if id_int < next_resource_id:
+                conflicting_ids.add(orig_id)
+        except ValueError:
+            pass
+    
+    # Only remap conflicting IDs, assign them new unique IDs starting from next_resource_id
+    if conflicting_ids:
+        for orig_id in sorted(conflicting_ids, key=lambda x: int(x) if x.isdigit() else 0):
+            id_remap[orig_id] = str(next_resource_id)
+            next_resource_id += 1
+        log.info(f"Remapped {len(conflicting_ids)} conflicting passthrough IDs: {id_remap}")
+    
+    # Update next_resource_id to account for non-conflicting original IDs
+    # This ensures objects don't use IDs that overlap with passthrough
+    max_original_id = max((int(x) for x in original_ids if x.isdigit()), default=0)
+    if max_original_id >= next_resource_id:
+        next_resource_id = max_original_id + 1
+
+    # Write textures first (they may be referenced by other elements)
+    _write_passthrough_textures(resources_element, scene, id_remap)
+
+    # Write texture groups (referenced by multiproperties)
+    _write_passthrough_texture_groups(resources_element, scene, id_remap)
+
+    # Write colorgroups
+    _write_passthrough_colorgroups(resources_element, scene, id_remap)
+
+    # Write non-textured PBR display properties
+    _write_passthrough_pbr_display(resources_element, scene, id_remap)
+
+    # Write compositematerials
+    _write_passthrough_composites(resources_element, scene, id_remap)
+
+    # Write multiproperties
+    _write_passthrough_multiproperties(resources_element, scene, id_remap)
+
+    # Write textured PBR display properties
+    _write_passthrough_pbr_textures(resources_element, scene, id_remap)
+
+    return next_resource_id, any_written
+
+
+def _write_passthrough_composites(resources_element: xml.etree.ElementTree.Element,
+                                   scene: bpy.types.Scene,
+                                   id_remap: Dict[str, str]) -> None:
+    """
+    Write stored compositematerials to XML.
+
+    :param resources_element: The <resources> element
+    :param scene: Blender scene with stored data
+    :param id_remap: Mapping from original IDs to new IDs
+    """
+    stored_data = scene.get("3mf_compositematerials")
+    if not stored_data:
+        return
+
+    try:
+        composite_data = json.loads(stored_data)
+    except json.JSONDecodeError:
+        log.warning("Failed to parse stored compositematerials data")
+        return
+
+    for res_id, comp in composite_data.items():
+        new_id = id_remap.get(res_id, res_id)
+        attrib = {
+            "id": new_id,
+            "matid": id_remap.get(comp["matid"], comp["matid"]),
+            "matindices": comp["matindices"],
+        }
+        if comp.get("displaypropertiesid"):
+            attrib["displaypropertiesid"] = id_remap.get(comp["displaypropertiesid"], comp["displaypropertiesid"])
+
+        comp_element = xml.etree.ElementTree.SubElement(
+            resources_element,
+            f"{{{MATERIAL_NAMESPACE}}}compositematerials",
+            attrib=attrib,
+        )
+
+        # Write composite children
+        for c in comp.get("composites", []):
+            xml.etree.ElementTree.SubElement(
+                comp_element,
+                f"{{{MATERIAL_NAMESPACE}}}composite",
+                attrib={"values": c.get("values", "")},
+            )
+
+        log.debug(f"Wrote passthrough compositematerials {res_id} -> {new_id}")
+
+    log.info(f"Wrote {len(composite_data)} passthrough compositematerials")
+
+
+def _write_passthrough_textures(resources_element: xml.etree.ElementTree.Element,
+                                 scene: bpy.types.Scene,
+                                 id_remap: Dict[str, str]) -> None:
+    """
+    Write stored texture2d elements to XML.
+
+    :param resources_element: The <resources> element
+    :param scene: Blender scene with stored data
+    :param id_remap: Mapping from original IDs to new IDs
+    """
+    stored_data = scene.get("3mf_textures")
+    if not stored_data:
+        return
+
+    try:
+        texture_data = json.loads(stored_data)
+    except json.JSONDecodeError:
+        log.warning("Failed to parse stored textures data")
+        return
+
+    for res_id, tex in texture_data.items():
+        new_id = id_remap.get(res_id, res_id)
+        attrib = {
+            "id": new_id,
+            "path": tex.get("path", ""),
+            "contenttype": tex.get("contenttype", "image/png"),
+        }
+        # Add optional attributes if not default
+        if tex.get("tilestyleu") and tex.get("tilestyleu") != "wrap":
+            attrib["tilestyleu"] = tex["tilestyleu"]
+        if tex.get("tilestylev") and tex.get("tilestylev") != "wrap":
+            attrib["tilestylev"] = tex["tilestylev"]
+        if tex.get("filter") and tex.get("filter") != "auto":
+            attrib["filter"] = tex["filter"]
+
+        xml.etree.ElementTree.SubElement(
+            resources_element,
+            f"{{{MATERIAL_NAMESPACE}}}texture2d",
+            attrib=attrib,
+        )
+
+        log.debug(f"Wrote passthrough texture2d {res_id} -> {new_id}")
+
+    log.info(f"Wrote {len(texture_data)} passthrough textures")
+
+
+def _write_passthrough_texture_groups(resources_element: xml.etree.ElementTree.Element,
+                                       scene: bpy.types.Scene,
+                                       id_remap: Dict[str, str]) -> None:
+    """
+    Write stored texture2dgroup elements to XML.
+
+    :param resources_element: The <resources> element
+    :param scene: Blender scene with stored data
+    :param id_remap: Mapping from original IDs to new IDs
+    """
+    stored_data = scene.get("3mf_texture_groups")
+    if not stored_data:
+        return
+
+    try:
+        texgroup_data = json.loads(stored_data)
+    except json.JSONDecodeError:
+        log.warning("Failed to parse stored texture groups data")
+        return
+
+    for res_id, tg in texgroup_data.items():
+        new_id = id_remap.get(res_id, res_id)
+        texid = tg.get("texid", "")
+        attrib = {
+            "id": new_id,
+            "texid": id_remap.get(texid, texid),
+        }
+        if tg.get("displaypropertiesid"):
+            dp_id = tg["displaypropertiesid"]
+            attrib["displaypropertiesid"] = id_remap.get(dp_id, dp_id)
+
+        group_element = xml.etree.ElementTree.SubElement(
+            resources_element,
+            f"{{{MATERIAL_NAMESPACE}}}texture2dgroup",
+            attrib=attrib,
+        )
+
+        # Write tex2coord children
+        for coord in tg.get("tex2coords", []):
+            if isinstance(coord, (list, tuple)) and len(coord) >= 2:
+                xml.etree.ElementTree.SubElement(
+                    group_element,
+                    f"{{{MATERIAL_NAMESPACE}}}tex2coord",
+                    attrib={"u": str(coord[0]), "v": str(coord[1])},
+                )
+
+        log.debug(f"Wrote passthrough texture2dgroup {res_id} -> {new_id}")
+
+    log.info(f"Wrote {len(texgroup_data)} passthrough texture groups")
+
+
+def _write_passthrough_colorgroups(resources_element: xml.etree.ElementTree.Element,
+                                    scene: bpy.types.Scene,
+                                    id_remap: Dict[str, str]) -> None:
+    """
+    Write stored colorgroup elements to XML.
+
+    :param resources_element: The <resources> element
+    :param scene: Blender scene with stored data
+    :param id_remap: Mapping from original IDs to new IDs
+    """
+    stored_data = scene.get("3mf_colorgroups")
+    if not stored_data:
+        return
+
+    try:
+        colorgroup_data = json.loads(stored_data)
+    except json.JSONDecodeError:
+        log.warning("Failed to parse stored colorgroups data")
+        return
+
+    for res_id, cg in colorgroup_data.items():
+        new_id = id_remap.get(res_id, res_id)
+        attrib = {"id": new_id}
+        if cg.get("displaypropertiesid"):
+            dp_id = cg["displaypropertiesid"]
+            attrib["displaypropertiesid"] = id_remap.get(dp_id, dp_id)
+
+        group_element = xml.etree.ElementTree.SubElement(
+            resources_element,
+            f"{{{MATERIAL_NAMESPACE}}}colorgroup",
+            attrib=attrib,
+        )
+
+        # Write color children
+        for color in cg.get("colors", []):
+            xml.etree.ElementTree.SubElement(
+                group_element,
+                f"{{{MATERIAL_NAMESPACE}}}color",
+                attrib={"color": color},
+            )
+
+        log.debug(f"Wrote passthrough colorgroup {res_id} -> {new_id}")
+
+    log.info(f"Wrote {len(colorgroup_data)} passthrough colorgroups")
+
+
+def _write_passthrough_pbr_display(resources_element: xml.etree.ElementTree.Element,
+                                    scene: bpy.types.Scene,
+                                    id_remap: Dict[str, str]) -> None:
+    """
+    Write stored non-textured PBR display properties to XML.
+
+    :param resources_element: The <resources> element
+    :param scene: Blender scene with stored data
+    :param id_remap: Mapping from original IDs to new IDs
+    """
+    stored_data = scene.get("3mf_pbr_display_props")
+    if not stored_data:
+        return
+
+    try:
+        pbr_data = json.loads(stored_data)
+    except json.JSONDecodeError:
+        log.warning("Failed to parse stored PBR display props data")
+        return
+
+    for res_id, prop in pbr_data.items():
+        new_id = id_remap.get(res_id, res_id)
+        prop_type = prop.get("type", "metallic")
+        properties = prop.get("properties", [])
+
+        if prop_type == "metallic":
+            element_name = f"{{{MATERIAL_NAMESPACE}}}pbmetallicdisplayproperties"
+            child_name = f"{{{MATERIAL_NAMESPACE}}}pbmetallic"
+        elif prop_type == "specular":
+            element_name = f"{{{MATERIAL_NAMESPACE}}}pbspeculardisplayproperties"
+            child_name = f"{{{MATERIAL_NAMESPACE}}}pbspecular"
+        elif prop_type == "translucent":
+            element_name = f"{{{MATERIAL_NAMESPACE}}}translucentdisplayproperties"
+            child_name = f"{{{MATERIAL_NAMESPACE}}}translucent"
+        else:
+            log.warning(f"Unknown PBR display property type: {prop_type}")
+            continue
+
+        display_element = xml.etree.ElementTree.SubElement(
+            resources_element,
+            element_name,
+            attrib={"id": new_id},
+        )
+
+        # Write child elements with their raw attributes
+        for prop_dict in properties:
+            xml.etree.ElementTree.SubElement(
+                display_element,
+                child_name,
+                attrib=prop_dict,
+            )
+
+        log.debug(f"Wrote passthrough {prop_type} PBR display properties {res_id} -> {new_id}")
+
+    log.info(f"Wrote {len(pbr_data)} passthrough PBR display properties")
+
+
+def _write_passthrough_multiproperties(resources_element: xml.etree.ElementTree.Element,
+                                        scene: bpy.types.Scene,
+                                        id_remap: Dict[str, str]) -> None:
+    """
+    Write stored multiproperties to XML.
+
+    :param resources_element: The <resources> element
+    :param scene: Blender scene with stored data
+    :param id_remap: Mapping from original IDs to new IDs
+    """
+    stored_data = scene.get("3mf_multiproperties")
+    if not stored_data:
+        return
+
+    try:
+        multi_data = json.loads(stored_data)
+    except json.JSONDecodeError:
+        log.warning("Failed to parse stored multiproperties data")
+        return
+
+    for res_id, multi in multi_data.items():
+        new_id = id_remap.get(res_id, res_id)
+        # Remap pids - space-separated list of resource IDs
+        orig_pids = multi["pids"].split()
+        remapped_pids = " ".join(id_remap.get(pid, pid) for pid in orig_pids)
+        
+        attrib = {
+            "id": new_id,
+            "pids": remapped_pids,
+        }
+        if multi.get("blendmethods"):
+            attrib["blendmethods"] = multi["blendmethods"]
+
+        multi_element = xml.etree.ElementTree.SubElement(
+            resources_element,
+            f"{{{MATERIAL_NAMESPACE}}}multiproperties",
+            attrib=attrib,
+        )
+
+        # Write multi children
+        for m in multi.get("multis", []):
+            xml.etree.ElementTree.SubElement(
+                multi_element,
+                f"{{{MATERIAL_NAMESPACE}}}multi",
+                attrib={"pindices": m.get("pindices", "")},
+            )
+
+        log.debug(f"Wrote passthrough multiproperties {res_id} -> {new_id}")
+
+    log.info(f"Wrote {len(multi_data)} passthrough multiproperties")
+
+
+def _write_passthrough_pbr_textures(resources_element: xml.etree.ElementTree.Element,
+                                     scene: bpy.types.Scene,
+                                     id_remap: Dict[str, str]) -> None:
+    """
+    Write stored textured PBR display properties to XML.
+
+    :param resources_element: The <resources> element
+    :param scene: Blender scene with stored data
+    :param id_remap: Mapping from original IDs to new IDs
+    """
+    stored_data = scene.get("3mf_pbr_texture_displays")
+    if not stored_data:
+        return
+
+    try:
+        pbr_data = json.loads(stored_data)
+    except json.JSONDecodeError:
+        log.warning("Failed to parse stored PBR texture displays data")
+        return
+
+    for res_id, prop in pbr_data.items():
+        new_id = id_remap.get(res_id, res_id)
+        prop_type = prop.get("type", "specular")
+        factors = prop.get("factors", {})
+
+        if prop_type == "specular":
+            primary_tex = prop.get("primary_texid", "")
+            secondary_tex = prop.get("secondary_texid", "")
+            diffuse_tex = prop.get("basecolor_texid", "")  # diffusetextureid in specular workflow
+            attrib = {
+                "id": new_id,
+                "name": prop.get("name", ""),
+            }
+            # Only include texture IDs if they have values
+            if primary_tex:
+                attrib["speculartextureid"] = id_remap.get(primary_tex, primary_tex)
+            if secondary_tex:
+                attrib["glossinesstextureid"] = id_remap.get(secondary_tex, secondary_tex)
+            if diffuse_tex:
+                attrib["diffusetextureid"] = id_remap.get(diffuse_tex, diffuse_tex)
+            # Add factor attributes
+            for factor_name, factor_value in factors.items():
+                attrib[factor_name] = factor_value
+
+            xml.etree.ElementTree.SubElement(
+                resources_element,
+                f"{{{MATERIAL_NAMESPACE}}}pbspeculartexturedisplayproperties",
+                attrib=attrib,
+            )
+        elif prop_type == "metallic":
+            primary_tex = prop.get("primary_texid", "")
+            secondary_tex = prop.get("secondary_texid", "")
+            basecolor_tex = prop.get("basecolor_texid", "")
+            attrib = {
+                "id": new_id,
+                "name": prop.get("name", ""),
+            }
+            # Only include texture IDs if they have values
+            if primary_tex:
+                attrib["metallictextureid"] = id_remap.get(primary_tex, primary_tex)
+            if secondary_tex:
+                attrib["roughnesstextureid"] = id_remap.get(secondary_tex, secondary_tex)
+            if basecolor_tex:
+                attrib["basecolortextureid"] = id_remap.get(basecolor_tex, basecolor_tex)
+            # Add factor attributes
+            for factor_name, factor_value in factors.items():
+                attrib[factor_name] = factor_value
+
+            xml.etree.ElementTree.SubElement(
+                resources_element,
+                f"{{{MATERIAL_NAMESPACE}}}pbmetallictexturedisplayproperties",
+                attrib=attrib,
+            )
+
+        log.debug(f"Wrote passthrough {prop_type} PBR texture display {res_id} -> {new_id}")
+
+    log.info(f"Wrote {len(pbr_data)} passthrough PBR texture displays")
 
 
 # =============================================================================
@@ -1002,7 +2223,9 @@ def write_triangles(
     mmu_slicer_format: str,
     vertex_colors: Dict[str, int],
     mesh: Optional[bpy.types.Mesh] = None,
-    blender_object: Optional[bpy.types.Object] = None
+    blender_object: Optional[bpy.types.Object] = None,
+    texture_groups: Optional[Dict[str, Dict]] = None,
+    basematerials_resource_id: Optional[str] = None
 ) -> None:
     """
     Writes a list of triangles into the specified mesh element.
@@ -1017,6 +2240,8 @@ def write_triangles(
     :param vertex_colors: Dictionary of color hex to filament index.
     :param mesh: The mesh containing these triangles.
     :param blender_object: The Blender object.
+    :param texture_groups: Dict of material_name -> texture group data for UV mapping.
+    :param basematerials_resource_id: The ID of the basematerials resource for per-face material refs.
     """
     triangles_element = xml.etree.ElementTree.SubElement(
         mesh_element, f"{{{MODEL_NAMESPACE}}}triangles"
@@ -1028,13 +2253,22 @@ def write_triangles(
         v2_name = "v2"
         v3_name = "v3"
         p1_name = "p1"
+        p2_name = "p2"
+        p3_name = "p3"
         pid_name = "pid"
     else:
         v1_name = f"{{{MODEL_NAMESPACE}}}v1"
         v2_name = f"{{{MODEL_NAMESPACE}}}v2"
         v3_name = f"{{{MODEL_NAMESPACE}}}v3"
         p1_name = f"{{{MODEL_NAMESPACE}}}p1"
+        p2_name = f"{{{MODEL_NAMESPACE}}}p2"
+        p3_name = f"{{{MODEL_NAMESPACE}}}p3"
         pid_name = f"{{{MODEL_NAMESPACE}}}pid"
+
+    # Get active UV layer for texture coordinate export
+    uv_layer = None
+    if mesh and texture_groups and mesh.uv_layers.active:
+        uv_layer = mesh.uv_layers.active
 
     for triangle in triangles:
         triangle_element = xml.etree.ElementTree.SubElement(
@@ -1067,13 +2301,44 @@ def write_triangles(
                         if paint_code:
                             triangle_element.attrib["paint_color"] = paint_code
         elif triangle.material_index < len(material_slots):
-            # Normal material handling
+            # Normal material handling (or textured material)
             triangle_material = material_slots[triangle.material_index].material
             if triangle_material is not None:
                 triangle_material_name = str(triangle_material.name)
-                if triangle_material_name in material_name_to_index:
+
+                # Check if this is a textured material
+                if texture_groups and triangle_material_name in texture_groups and uv_layer:
+                    # Textured material - use texture2dgroup with UV indices
+                    group_data = texture_groups[triangle_material_name]
+                    group_id = group_data["group_id"]
+                    triangle_element.attrib[pid_name] = group_id
+
+                    # Get UV coordinates for this triangle's loops
+                    # triangle.loops gives the 3 loop indices for this triangle
+                    uv_data = uv_layer.data
+                    loop_indices = triangle.loops
+
+                    # Get or create tex2coord indices for each UV
+                    uv1 = uv_data[loop_indices[0]].uv
+                    uv2 = uv_data[loop_indices[1]].uv
+                    uv3 = uv_data[loop_indices[2]].uv
+
+                    idx1 = get_or_create_tex2coord(group_data, uv1[0], uv1[1])
+                    idx2 = get_or_create_tex2coord(group_data, uv2[0], uv2[1])
+                    idx3 = get_or_create_tex2coord(group_data, uv3[0], uv3[1])
+
+                    triangle_element.attrib[p1_name] = str(idx1)
+                    triangle_element.attrib[p2_name] = str(idx2)
+                    triangle_element.attrib[p3_name] = str(idx3)
+
+                elif triangle_material_name in material_name_to_index:
+                    # Standard color material
                     material_index = material_name_to_index[triangle_material_name]
                     if material_index != object_material_list_index:
+                        # Must write pid along with p1 per 3MF spec, so import knows
+                        # which basematerials group to look up the index in
+                        if basematerials_resource_id:
+                            triangle_element.attrib[pid_name] = str(basematerials_resource_id)
                         triangle_element.attrib[p1_name] = str(material_index)
 
 

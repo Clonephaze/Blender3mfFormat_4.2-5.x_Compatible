@@ -29,9 +29,12 @@ __all__ = [
     "MODEL_REL",
     "THUMBNAIL_REL",
     "CORE_PROPERTIES_REL",
+    "TEXTURE_REL",
     "RELS_MIMETYPE",
     "MODEL_MIMETYPE",
     "CORE_PROPERTIES_MIMETYPE",
+    "TEXTURE_MIMETYPE_PNG",
+    "TEXTURE_MIMETYPE_JPEG",
     "MODEL_NAMESPACE",
     "SLIC3RPE_NAMESPACE",
     "TRIANGLE_SETS_NAMESPACE",
@@ -85,11 +88,14 @@ RELS_FOLDER: str = "_rels"  # Folder name to store relationships files in.
 MODEL_REL: str = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"  # Relationship type of 3D models.
 THUMBNAIL_REL: str = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"
 CORE_PROPERTIES_REL: str = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties"
+TEXTURE_REL: str = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dtexture"  # 3D texture relationship type
 
 # MIME types of files in the archive.
 RELS_MIMETYPE: str = "application/vnd.openxmlformats-package.relationships+xml"  # MIME type of .rels files.
 MODEL_MIMETYPE: str = "application/vnd.ms-package.3dmanufacturing-3dmodel+xml"  # MIME type of .model files.
 CORE_PROPERTIES_MIMETYPE: str = "application/vnd.openxmlformats-package.core-properties+xml"
+TEXTURE_MIMETYPE_PNG: str = "image/png"  # MIME type for PNG textures
+TEXTURE_MIMETYPE_JPEG: str = "image/jpeg"  # MIME type for JPEG textures
 
 # Constants in the 3D model file.
 MODEL_NAMESPACE: str = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
