@@ -32,7 +32,7 @@ For backward compatibility, this module re-exports functions from:
 """
 
 import base64
-import collections
+import bmesh
 import datetime
 import itertools
 import logging
@@ -305,16 +305,18 @@ def unit_scale(context: bpy.types.Context, global_scale: float) -> float:
 def check_non_manifold_geometry(blender_objects: List[bpy.types.Object],
                                 use_mesh_modifiers: bool) -> List[str]:
     """
-    Check all mesh objects for non-manifold geometry.
+    Check mesh objects for non-manifold geometry using BMesh.
 
     Non-manifold geometry can cause problems in slicers and is generally
-    not suitable for 3D printing.
+    not suitable for 3D printing. Uses BMesh's C-optimized is_manifold
+    property for fast detection.
+    
+    Stops checking after finding the first non-manifold object for performance.
+    
     :param blender_objects: List of Blender objects to check.
     :param use_mesh_modifiers: Whether to apply modifiers when getting mesh.
-    :return: List of object names with non-manifold geometry.
+    :return: List with first object name that has non-manifold geometry, or empty list.
     """
-    non_manifold_objects = []
-
     for blender_object in blender_objects:
         if blender_object.type != 'MESH':
             continue
@@ -334,35 +336,33 @@ def check_non_manifold_geometry(blender_objects: List[bpy.types.Object],
         if mesh is None:
             continue
 
-        # Check for non-manifold geometry using edge_keys for O(n) performance
+        # Use BMesh for fast C-optimized non-manifold detection
+        bm = bmesh.new()
+        bm.from_mesh(mesh)
+        
         has_non_manifold = False
-
-        # Count edge usage across all polygons
-        edge_face_count = collections.Counter()
-        for poly in mesh.polygons:
-            for edge_key in poly.edge_keys:
-                edge_face_count[edge_key] += 1
-
-        # Check if any edge is used by != 2 faces
-        for count in edge_face_count.values():
-            if count != 2:
+        
+        # Check edges - BMesh provides is_manifold property at C level
+        for edge in bm.edges:
+            if not edge.is_manifold:
                 has_non_manifold = True
                 break
-
-        # Check for loose vertices (not part of any face)
-        if not has_non_manifold and len(mesh.vertices) > 0:
-            vertices_in_faces = set()
-            for poly in mesh.polygons:
-                vertices_in_faces.update(poly.vertices)
-            if len(vertices_in_faces) < len(mesh.vertices):
-                has_non_manifold = True
-
+        
+        # Check vertices for non-manifold (wire verts, etc.)
+        if not has_non_manifold:
+            for vert in bm.verts:
+                if not vert.is_manifold:
+                    has_non_manifold = True
+                    break
+        
+        bm.free()
         eval_object.to_mesh_clear()
 
         if has_non_manifold:
-            non_manifold_objects.append(blender_object.name)
+            # Return immediately after finding first non-manifold object
+            return [blender_object.name]
 
-    return non_manifold_objects
+    return []
 
 
 def format_transformation(transformation: mathutils.Matrix) -> str:

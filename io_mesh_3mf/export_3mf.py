@@ -279,16 +279,13 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             if mesh_objects:
                 non_manifold_objects = check_non_manifold_geometry(mesh_objects, self.use_mesh_modifiers)
                 if non_manifold_objects:
-                    obj_names = ", ".join(non_manifold_objects[:3])
-                    if len(non_manifold_objects) > 3:
-                        obj_names += f", and {len(non_manifold_objects) - 3} more"
+                    # Early exit check - found at least one issue
                     self.safe_report(
                         {'WARNING'},
-                        f"Non-manifold geometry detected in: {obj_names}. "
-                        "This may cause problems in slicers."
+                        "Exported geometry contains non-manifold issues. "
+                        "This may cause warnings in some slicers."
                     )
-                    log.warning(f"Non-manifold geometry found in {len(non_manifold_objects)} object(s): "
-                                f"{', '.join(non_manifold_objects)}")
+                    log.warning(f"Non-manifold geometry detected in: {non_manifold_objects[0]}")
 
             global_scale = _unit_scale(context, self.global_scale)
 

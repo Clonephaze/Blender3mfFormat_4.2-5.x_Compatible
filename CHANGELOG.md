@@ -5,6 +5,7 @@ Features
 * Drag & drop .3mf files directly into Blenders viewport
 * Grid Layout: arrange imported objects in a grid
 * Origin Placement: choose original, center, or bottom center
+* Faster Manifold Check: use bmesh module for faster non-manifold detection
 
 1.3.0 — Textured PBR Materials
 ====
