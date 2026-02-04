@@ -1,4 +1,4 @@
-﻿# Blender add-on to import and export 3MF files.
+# Blender add-on to import and export 3MF files.
 # Copyright (C) 2020 Ghostkeeper
 # Copyright (C) 2025 Jack (modernization for Blender 4.2+)
 # This add-on is free software; you can redistribute it and/or modify it under the terms of the GNU General Public
@@ -91,8 +91,8 @@ ResourceMaterial = collections.namedtuple(
         # Textured PBR support (pbmetallictexturedisplayproperties / pbspeculartexturedisplayproperties)
         "metallic_texid",   # ID of texture2d for metallic map
         "roughness_texid",  # ID of texture2d for roughness map
-        "specular_texid",   # ID of texture2d for specular map  
-        "glossiness_texid", # ID of texture2d for glossiness map
+        "specular_texid",    # ID of texture2d for specular map
+        "glossiness_texid",  # ID of texture2d for glossiness map
         "basecolor_texid",  # ID of texture2d for base color map (from pbmetallictexturedisplayproperties)
     ],
     defaults=[None, None, None, None, None, None, None, None, None, None, None, None, None]  # All optional
@@ -1024,7 +1024,7 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         pbr_metallic_props = self._read_pbr_metallic_properties(root, material_ns)
         pbr_specular_props = self._read_pbr_specular_properties(root, material_ns)
         pbr_translucent_props = self._read_pbr_translucent_properties(root, material_ns)
-        
+
         # Parse textured PBR display properties BEFORE basematerials
         # (basematerials lookup textured PBR by displaypropertiesid)
         self._read_pbr_texture_display_properties(root, material_ns)
@@ -1069,14 +1069,14 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
             ):
                 name = base_item.attrib.get("name", "3MF Material")
                 color = base_item.attrib.get("displaycolor")
-                
+
                 # Check for per-material displaypropertiesid (overrides group-level)
                 base_display_props_id = base_item.attrib.get("displaypropertiesid")
                 display_props_id = base_display_props_id if base_display_props_id else group_display_props_id
-                
+
                 pbr_data = {}
                 textured_pbr = None
-                
+
                 if display_props_id:
                     # First check for scalar PBR properties
                     if base_display_props_id:
@@ -1084,7 +1084,7 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                         pbr_data = base_pbr_props[0] if base_pbr_props else {}
                     elif group_pbr_props_list:
                         pbr_data = group_pbr_props_list[index] if index < len(group_pbr_props_list) else {}
-                    
+
                     # If no scalar data found, check for textured PBR properties
                     if not pbr_data and display_props_id in self.resource_pbr_texture_displays:
                         textured_pbr = self.resource_pbr_texture_displays[display_props_id]
@@ -1092,7 +1092,7 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                 elif group_pbr_props_list:
                     # Use group-level properties with positional index
                     pbr_data = group_pbr_props_list[index] if index < len(group_pbr_props_list) else {}
-                    
+
                 if color is not None:
                     # Parse the color. It's a hexadecimal number indicating RGB or RGBA.
                     color = color.lstrip(
@@ -1133,7 +1133,7 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                 specular_texid = None
                 glossiness_texid = None
                 basecolor_texid = None
-                
+
                 if textured_pbr:
                     if textured_pbr.type == "metallic":
                         metallic_texid = textured_pbr.primary_texid
@@ -1183,7 +1183,7 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                     log.debug(f"Material '{name}' has PBR properties: {pbr_data}")
                 if textured_pbr:
                     log.debug(f"Material '{name}' has textured PBR: metallic_tex={metallic_texid}, "
-                             f"roughness_tex={roughness_texid}, basecolor_tex={basecolor_texid}")
+                              f"roughness_tex={roughness_texid}, basecolor_tex={basecolor_texid}")
 
                 index += 1
 
@@ -1438,8 +1438,9 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         if self.resource_texture_groups:
             log.info(f"Found {len(self.resource_texture_groups)} texture2dgroup resources")
 
-    def _read_composite_materials(self, root: xml.etree.ElementTree.Element,
-                                   material_ns: Dict[str, str]) -> None:
+    def _read_composite_materials(
+            self, root: xml.etree.ElementTree.Element,
+            material_ns: Dict[str, str]) -> None:
         """
         Parse <m:compositematerials> elements for round-trip support.
 
@@ -1496,8 +1497,9 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         if self.resource_composites:
             log.info(f"Found {len(self.resource_composites)} compositematerials resources (passthrough)")
 
-    def _read_multiproperties(self, root: xml.etree.ElementTree.Element,
-                               material_ns: Dict[str, str]) -> None:
+    def _read_multiproperties(
+            self, root: xml.etree.ElementTree.Element,
+            material_ns: Dict[str, str]) -> None:
         """
         Parse <m:multiproperties> elements for round-trip support.
 
@@ -1551,8 +1553,9 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         if self.resource_multiproperties:
             log.info(f"Found {len(self.resource_multiproperties)} multiproperties resources (passthrough)")
 
-    def _read_pbr_texture_display_properties(self, root: xml.etree.ElementTree.Element,
-                                              material_ns: Dict[str, str]) -> None:
+    def _read_pbr_texture_display_properties(
+            self, root: xml.etree.ElementTree.Element,
+            material_ns: Dict[str, str]) -> None:
         """
         Parse textured PBR display properties for round-trip support.
 
@@ -1653,7 +1656,7 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         try:
             with zipfile.ZipFile(archive_path, 'r') as archive:
                 archive_files = archive.namelist()
-                
+
                 for texture_id, texture in list(self.resource_textures.items()):
                     # Normalize path (remove leading slash for archive access)
                     tex_path = texture.path.lstrip('/')
@@ -2096,9 +2099,11 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
             result.append((x, y, z))
         return result
 
-    def read_triangles(self, object_node: xml.etree.ElementTree.Element,
-                       default_material: Optional[int],
-                       material_pid: Optional[int]) -> Tuple[List[Tuple[int, int, int]], List[Optional[int]], List[Optional[Tuple]]]:
+    def read_triangles(
+            self, object_node: xml.etree.ElementTree.Element,
+            default_material: Optional[int],
+            material_pid: Optional[int]
+    ) -> Tuple[List[Tuple[int, int, int]], List[Optional[int]], List[Optional[Tuple]]]:
         """
         Reads out the triangles from an XML node of an object.
 
@@ -2214,8 +2219,9 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                 continue  # No fallback this time. Leave out the entire triangle.
         return vertices, materials, triangle_uvs
 
-    def _get_or_create_textured_material(self, texture_group_id: str,
-                                          texture_group: 'ResourceTextureGroup') -> Optional['ResourceMaterial']:
+    def _get_or_create_textured_material(
+            self, texture_group_id: str,
+            texture_group: 'ResourceTextureGroup') -> Optional['ResourceMaterial']:
         """
         Get or create a ResourceMaterial for a texture group.
 
@@ -2333,7 +2339,7 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                     if pindex in material_group:
                         material = material_group[pindex]
                         log.debug(f"Multiproperties {multiprop_id}: resolved to material "
-                                 f"'{material.name}' from basematerials {pid}[{pindex}]")
+                                  f"'{material.name}' from basematerials {pid}[{pindex}]")
 
             # Check if this pid is a texture group (for UVs)
             elif pid in self.resource_texture_groups:
@@ -2994,8 +3000,9 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         if has_pbr:
             log.info(f"Applied PBR properties to material '{resource_material.name}'")
 
-    def _setup_textured_material(self, material: bpy.types.Material,
-                                  texture: 'ResourceTexture') -> None:
+    def _setup_textured_material(
+            self, material: bpy.types.Material,
+            texture: 'ResourceTexture') -> None:
         """
         Set up a Blender material with an Image Texture node for 3MF texture support.
 
@@ -3052,13 +3059,14 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
 
         log.info(f"Created textured material with image '{texture.blender_image.name}'")
 
-    def _apply_pbr_textures_to_material(self, material: bpy.types.Material,
-                                         resource_material: ResourceMaterial) -> bool:
+    def _apply_pbr_textures_to_material(
+            self, material: bpy.types.Material,
+            resource_material: ResourceMaterial) -> bool:
         """
         Apply PBR texture maps from a 3MF ResourceMaterial to a Blender material.
 
         Creates Image Texture nodes and connects them to the appropriate Principled BSDF inputs.
-        Handles both metallic workflow (metallic + roughness + basecolor textures) and specular 
+        Handles both metallic workflow (metallic + roughness + basecolor textures) and specular
         workflow (specular + glossiness + diffuse textures).
 
         :param material: The Blender material to configure (must have node tree)
@@ -3104,7 +3112,7 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                 tex_node.location = (principled.location.x + x_offset, principled.location.y + 400)
                 tex_node.label = "Base Color Map"
                 # Base color should be in sRGB color space
-                
+
                 links.new(tex_node.outputs['Color'], principled.inputs['Base Color'])
                 applied_any = True
                 log.debug(f"Applied base color texture '{texture.blender_image.name}' to '{material.name}'")
@@ -3119,7 +3127,7 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                 tex_node.label = "Metallic Map"
                 # Metallic maps should be non-color data
                 tex_node.image.colorspace_settings.name = 'Non-Color'
-                
+
                 links.new(tex_node.outputs['Color'], principled.inputs['Metallic'])
                 applied_any = True
                 log.debug(f"Applied metallic texture '{texture.blender_image.name}' to '{material.name}'")
@@ -3134,7 +3142,7 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                 tex_node.label = "Roughness Map"
                 # Roughness maps should be non-color data
                 tex_node.image.colorspace_settings.name = 'Non-Color'
-                
+
                 links.new(tex_node.outputs['Color'], principled.inputs['Roughness'])
                 applied_any = True
                 log.debug(f"Applied roughness texture '{texture.blender_image.name}' to '{material.name}'")
@@ -3147,7 +3155,7 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                 tex_node.image = texture.blender_image
                 tex_node.location = (principled.location.x + x_offset, principled.location.y - 200)
                 tex_node.label = "Specular Map"
-                
+
                 # Connect to Specular IOR Level (Blender 4.0+) or Specular (older)
                 if 'Specular IOR Level' in principled.inputs:
                     links.new(tex_node.outputs['Color'], principled.inputs['Specular IOR Level'])
@@ -3166,11 +3174,11 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                 tex_node.label = "Glossiness Map"
                 # Glossiness maps should be non-color data
                 tex_node.image.colorspace_settings.name = 'Non-Color'
-                
+
                 # Glossiness is inverse of roughness, so we need an Invert node
                 invert_node = nodes.new('ShaderNodeInvert')
                 invert_node.location = (principled.location.x + x_offset + 100, principled.location.y - 400)
-                
+
                 links.new(tex_node.outputs['Color'], invert_node.inputs['Color'])
                 links.new(invert_node.outputs['Color'], principled.inputs['Roughness'])
                 applied_any = True
@@ -3353,12 +3361,14 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
 
                     # Try to reuse existing material if enabled (not for textured materials or PBR textured materials)
                     material = None
-                    has_pbr_textures = (triangle_material.basecolor_texid is not None or 
-                                       triangle_material.metallic_texid is not None or 
-                                       triangle_material.roughness_texid is not None or
-                                       triangle_material.specular_texid is not None or
-                                       triangle_material.glossiness_texid is not None)
-                    
+                    has_pbr_textures = (
+                        triangle_material.basecolor_texid is not None
+                        or triangle_material.metallic_texid is not None
+                        or triangle_material.roughness_texid is not None
+                        or triangle_material.specular_texid is not None
+                        or triangle_material.glossiness_texid is not None
+                    )
+
                     if self.reuse_materials and triangle_material.texture_id is None and not has_pbr_textures:
                         material = self.find_existing_material(material_name, triangle_material.color)
 
@@ -3366,7 +3376,7 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
                     if material is None:
                         material = bpy.data.materials.new(material_name)
                         material.use_nodes = True
-                        
+
                         # Check if this is a textured material
                         if triangle_material.texture_id is not None:
                             # Get texture group and texture
@@ -3392,12 +3402,9 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
 
                             # Apply scalar PBR properties from 3MF Materials Extension
                             self._apply_pbr_to_principled(principled, material, triangle_material)
-                            
+
                             # Apply textured PBR properties (metallic/roughness/specular texture maps)
                             self._apply_pbr_textures_to_material(material, triangle_material)
-
-                        # Apply PBR properties from 3MF Materials Extension
-                        self._apply_pbr_to_principled(principled, material, triangle_material)
 
                     self.resource_to_material[triangle_material] = material
                 else:

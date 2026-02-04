@@ -1,4 +1,4 @@
-﻿# Blender add-on to import and export 3MF files.
+# Blender add-on to import and export 3MF files.
 # Copyright (C) 2020 Ghostkeeper
 # Copyright (C) 2025 Jack (modernization for Blender 4.2+)
 # This add-on is free software; you can redistribute it and/or modify it under the terms of the GNU General Public

@@ -426,7 +426,8 @@ def write_materials(resources_element: xml.etree.ElementTree.Element,
                     use_orca_format: bool,
                     vertex_colors: Dict[str, int],
                     next_resource_id: int,
-                    export_pbr: bool = True) -> Tuple[Dict[str, int], int, str, Optional[xml.etree.ElementTree.Element]]:
+                    export_pbr: bool = True
+                    ) -> Tuple[Dict[str, int], int, str, Optional[xml.etree.ElementTree.Element]]:
     """
     Write the materials on the specified blender objects to a 3MF document.
 
@@ -963,8 +964,8 @@ def _find_base_color_texture(material: bpy.types.Material) -> Optional[Dict]:
 
 
 def _find_texture_from_input(material: bpy.types.Material,
-                              input_name: str,
-                              non_color: bool = False) -> Optional[Dict]:
+                             input_name: str,
+                             non_color: bool = False) -> Optional[Dict]:
     """
     Find Image Texture node connected to a specific Principled BSDF input.
 
@@ -1102,7 +1103,8 @@ def detect_pbr_textured_materials(blender_objects: List[bpy.types.Object]) -> Di
 
 
 def write_textures_to_archive(archive: zipfile.ZipFile,
-                               textured_materials: Dict[str, Dict]) -> Dict[str, str]:
+                              textured_materials: Dict[str, Dict]
+                              ) -> Dict[str, str]:
     """
     Write texture images to the 3MF archive.
 
@@ -1179,7 +1181,7 @@ def write_textures_to_archive(archive: zipfile.ZipFile,
 
 
 def write_texture_relationships(archive: zipfile.ZipFile,
-                                 image_to_path: Dict[str, str]) -> None:
+                                image_to_path: Dict[str, str]) -> None:
     """
     Write the model's relationship file to declare texture resources.
 
@@ -1348,7 +1350,8 @@ def get_or_create_tex2coord(texture_group_data: Dict, u: float, v: float) -> int
 
 
 def write_pbr_textures_to_archive(archive: zipfile.ZipFile,
-                                   pbr_materials: Dict[str, Dict]) -> Dict[str, str]:
+                                  pbr_materials: Dict[str, Dict]
+                                  ) -> Dict[str, str]:
     """
     Write ALL PBR texture images (base_color, roughness, metallic, normal) to the 3MF archive.
 
@@ -1428,11 +1431,13 @@ def write_pbr_textures_to_archive(archive: zipfile.ZipFile,
     return image_to_path
 
 
-def write_pbr_texture_display_properties(resources_element: xml.etree.ElementTree.Element,
-                                          pbr_materials: Dict[str, Dict],
-                                          image_to_path: Dict[str, str],
-                                          next_resource_id: int,
-                                          basematerials_element: Optional[xml.etree.ElementTree.Element] = None) -> Tuple[Dict[str, str], int]:
+def write_pbr_texture_display_properties(
+        resources_element: xml.etree.ElementTree.Element,
+        pbr_materials: Dict[str, Dict],
+        image_to_path: Dict[str, str],
+        next_resource_id: int,
+        basematerials_element: Optional[xml.etree.ElementTree.Element] = None
+) -> Tuple[Dict[str, str], int]:
     """
     Write pbmetallictexturedisplayproperties elements for PBR materials.
 
@@ -1458,20 +1463,21 @@ def write_pbr_texture_display_properties(resources_element: xml.etree.ElementTre
     def get_or_create_texture2d(tex_info: Optional[Dict], tex_type: str) -> str:
         """Helper to create texture2d resource and return its ID."""
         nonlocal next_resource_id
-        
+
         if not tex_info or not tex_info.get('image'):
             return ""
-        
+
         image_name = str(tex_info['image'].name)
         archive_path = image_to_path.get(image_name)
         if not archive_path:
             return ""
-        
+
         if archive_path not in texture_ids:
             tex_id = str(next_resource_id)
             next_resource_id += 1
 
-            contenttype = TEXTURE_MIMETYPE_JPEG if archive_path.lower().endswith(('.jpg', '.jpeg')) else TEXTURE_MIMETYPE_PNG
+            is_jpeg = archive_path.lower().endswith(('.jpg', '.jpeg'))
+            contenttype = TEXTURE_MIMETYPE_JPEG if is_jpeg else TEXTURE_MIMETYPE_PNG
 
             xml.etree.ElementTree.SubElement(
                 resources_element,
@@ -1527,9 +1533,11 @@ def write_pbr_texture_display_properties(resources_element: xml.etree.ElementTre
         )
 
         material_to_display_props[mat_name] = display_props_id
-        log.info(f"Created pbmetallictexturedisplayproperties ID {display_props_id} for '{mat_name}' "
-                f"(basecolor={basecolor_texid or 'none'}, roughness={roughness_texid or 'none'}, "
-                f"metallic={metallic_texid or 'none'})")
+        log.info(
+            f"Created pbmetallictexturedisplayproperties ID {display_props_id} for '{mat_name}' "
+            f"(basecolor={basecolor_texid or 'none'}, roughness={roughness_texid or 'none'}, "
+            f"metallic={metallic_texid or 'none'})"
+        )
 
     # Link basematerials to display properties
     # Note: 3MF spec allows only ONE displaypropertiesid per basematerials
@@ -1578,7 +1586,7 @@ def write_prusa_filament_colors(archive: zipfile.ZipFile, vertex_colors: Dict[st
 # =============================================================================
 
 def write_passthrough_materials(resources_element: xml.etree.ElementTree.Element,
-                                 next_resource_id: int) -> Tuple[int, bool]:
+                                next_resource_id: int) -> Tuple[int, bool]:
     """
     Write stored passthrough material data from scene custom properties.
 
@@ -1614,59 +1622,59 @@ def write_passthrough_materials(resources_element: xml.etree.ElementTree.Element
     # This prevents conflicts with newly created materials
     # Only remap IDs that would conflict with IDs < next_resource_id
     id_remap = {}
-    
+
     # Collect all original IDs that need remapping
     original_ids = set()
-    
+
     if has_textures:
         try:
             tex_data = json.loads(scene.get("3mf_textures", "{}"))
             original_ids.update(tex_data.keys())
         except json.JSONDecodeError:
             pass
-    
+
     if has_tex_groups:
         try:
             group_data = json.loads(scene.get("3mf_texture_groups", "{}"))
             original_ids.update(group_data.keys())
         except json.JSONDecodeError:
             pass
-    
+
     if has_colorgroups:
         try:
             cg_data = json.loads(scene.get("3mf_colorgroups", "{}"))
             original_ids.update(cg_data.keys())
         except json.JSONDecodeError:
             pass
-    
+
     if has_pbr_display:
         try:
             pbr_data = json.loads(scene.get("3mf_pbr_display_props", "{}"))
             original_ids.update(pbr_data.keys())
         except json.JSONDecodeError:
             pass
-    
+
     if has_composites:
         try:
             comp_data = json.loads(scene.get("3mf_compositematerials", "{}"))
             original_ids.update(comp_data.keys())
         except json.JSONDecodeError:
             pass
-    
+
     if has_multiprops:
         try:
             mp_data = json.loads(scene.get("3mf_multiproperties", "{}"))
             original_ids.update(mp_data.keys())
         except json.JSONDecodeError:
             pass
-    
+
     if has_pbr_tex:
         try:
             pbr_tex_data = json.loads(scene.get("3mf_pbr_texture_displays", "{}"))
             original_ids.update(pbr_tex_data.keys())
         except json.JSONDecodeError:
             pass
-    
+
     # Find IDs that would conflict with newly created materials (IDs 1 to next_resource_id-1)
     conflicting_ids = set()
     for orig_id in original_ids:
@@ -1676,14 +1684,14 @@ def write_passthrough_materials(resources_element: xml.etree.ElementTree.Element
                 conflicting_ids.add(orig_id)
         except ValueError:
             pass
-    
+
     # Only remap conflicting IDs, assign them new unique IDs starting from next_resource_id
     if conflicting_ids:
         for orig_id in sorted(conflicting_ids, key=lambda x: int(x) if x.isdigit() else 0):
             id_remap[orig_id] = str(next_resource_id)
             next_resource_id += 1
         log.info(f"Remapped {len(conflicting_ids)} conflicting passthrough IDs: {id_remap}")
-    
+
     # Update next_resource_id to account for non-conflicting original IDs
     # This ensures objects don't use IDs that overlap with passthrough
     max_original_id = max((int(x) for x in original_ids if x.isdigit()), default=0)
@@ -1715,8 +1723,8 @@ def write_passthrough_materials(resources_element: xml.etree.ElementTree.Element
 
 
 def _write_passthrough_composites(resources_element: xml.etree.ElementTree.Element,
-                                   scene: bpy.types.Scene,
-                                   id_remap: Dict[str, str]) -> None:
+                                  scene: bpy.types.Scene,
+                                  id_remap: Dict[str, str]) -> None:
     """
     Write stored compositematerials to XML.
 
@@ -1764,8 +1772,8 @@ def _write_passthrough_composites(resources_element: xml.etree.ElementTree.Eleme
 
 
 def _write_passthrough_textures(resources_element: xml.etree.ElementTree.Element,
-                                 scene: bpy.types.Scene,
-                                 id_remap: Dict[str, str]) -> None:
+                                scene: bpy.types.Scene,
+                                id_remap: Dict[str, str]) -> None:
     """
     Write stored texture2d elements to XML.
 
@@ -1810,8 +1818,8 @@ def _write_passthrough_textures(resources_element: xml.etree.ElementTree.Element
 
 
 def _write_passthrough_texture_groups(resources_element: xml.etree.ElementTree.Element,
-                                       scene: bpy.types.Scene,
-                                       id_remap: Dict[str, str]) -> None:
+                                      scene: bpy.types.Scene,
+                                      id_remap: Dict[str, str]) -> None:
     """
     Write stored texture2dgroup elements to XML.
 
@@ -1861,8 +1869,8 @@ def _write_passthrough_texture_groups(resources_element: xml.etree.ElementTree.E
 
 
 def _write_passthrough_colorgroups(resources_element: xml.etree.ElementTree.Element,
-                                    scene: bpy.types.Scene,
-                                    id_remap: Dict[str, str]) -> None:
+                                   scene: bpy.types.Scene,
+                                   id_remap: Dict[str, str]) -> None:
     """
     Write stored colorgroup elements to XML.
 
@@ -1907,8 +1915,8 @@ def _write_passthrough_colorgroups(resources_element: xml.etree.ElementTree.Elem
 
 
 def _write_passthrough_pbr_display(resources_element: xml.etree.ElementTree.Element,
-                                    scene: bpy.types.Scene,
-                                    id_remap: Dict[str, str]) -> None:
+                                   scene: bpy.types.Scene,
+                                   id_remap: Dict[str, str]) -> None:
     """
     Write stored non-textured PBR display properties to XML.
 
@@ -1964,8 +1972,8 @@ def _write_passthrough_pbr_display(resources_element: xml.etree.ElementTree.Elem
 
 
 def _write_passthrough_multiproperties(resources_element: xml.etree.ElementTree.Element,
-                                        scene: bpy.types.Scene,
-                                        id_remap: Dict[str, str]) -> None:
+                                       scene: bpy.types.Scene,
+                                       id_remap: Dict[str, str]) -> None:
     """
     Write stored multiproperties to XML.
 
@@ -1988,7 +1996,7 @@ def _write_passthrough_multiproperties(resources_element: xml.etree.ElementTree.
         # Remap pids - space-separated list of resource IDs
         orig_pids = multi["pids"].split()
         remapped_pids = " ".join(id_remap.get(pid, pid) for pid in orig_pids)
-        
+
         attrib = {
             "id": new_id,
             "pids": remapped_pids,
@@ -2016,8 +2024,8 @@ def _write_passthrough_multiproperties(resources_element: xml.etree.ElementTree.
 
 
 def _write_passthrough_pbr_textures(resources_element: xml.etree.ElementTree.Element,
-                                     scene: bpy.types.Scene,
-                                     id_remap: Dict[str, str]) -> None:
+                                    scene: bpy.types.Scene,
+                                    id_remap: Dict[str, str]) -> None:
     """
     Write stored textured PBR display properties to XML.
 
