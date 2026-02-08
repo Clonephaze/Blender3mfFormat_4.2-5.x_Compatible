@@ -41,7 +41,9 @@ from ..constants import (
 from ..utilities import debug, warn, error
 
 
-def detect_textured_materials(blender_objects: List[bpy.types.Object]) -> Dict[str, Dict]:
+def detect_textured_materials(
+    blender_objects: List[bpy.types.Object],
+) -> Dict[str, Dict]:
     """
     Detect materials with Image Texture nodes connected to Base Color.
 
@@ -93,7 +95,7 @@ def _find_base_color_texture(material: bpy.types.Material) -> Optional[Dict]:
     # Find Principled BSDF node
     principled = None
     for node in nodes:
-        if node.type == 'BSDF_PRINCIPLED':
+        if node.type == "BSDF_PRINCIPLED":
             principled = node
             break
 
@@ -101,7 +103,7 @@ def _find_base_color_texture(material: bpy.types.Material) -> Optional[Dict]:
         return None
 
     # Check Base Color input for image texture
-    base_color_input = principled.inputs.get('Base Color')
+    base_color_input = principled.inputs.get("Base Color")
     if not base_color_input or not base_color_input.is_linked:
         return None
 
@@ -109,15 +111,15 @@ def _find_base_color_texture(material: bpy.types.Material) -> Optional[Dict]:
     for link in links:
         if link.to_socket == base_color_input:
             from_node = link.from_node
-            if from_node.type == 'TEX_IMAGE' and from_node.image:
+            if from_node.type == "TEX_IMAGE" and from_node.image:
                 image = from_node.image
 
                 # Determine tile style from extension mode
-                extension = getattr(from_node, 'extension', 'REPEAT')
-                if extension == 'CLIP':
+                extension = getattr(from_node, "extension", "REPEAT")
+                if extension == "CLIP":
                     tilestyleu = "clamp"
                     tilestylev = "clamp"
-                elif extension == 'EXTEND':
+                elif extension == "EXTEND":
                     tilestyleu = "mirror"  # Closest approximation
                     tilestylev = "mirror"
                 else:
@@ -131,8 +133,8 @@ def _find_base_color_texture(material: bpy.types.Material) -> Optional[Dict]:
                 original_path = material.get("3mf_texture_path", "")
 
                 # Determine filter from interpolation
-                interpolation = getattr(from_node, 'interpolation', 'Linear')
-                if interpolation == 'Closest':
+                interpolation = getattr(from_node, "interpolation", "Linear")
+                if interpolation == "Closest":
                     filter_mode = "nearest"
                 elif filter_mode not in ("linear", "nearest"):
                     filter_mode = "auto"
@@ -148,9 +150,7 @@ def _find_base_color_texture(material: bpy.types.Material) -> Optional[Dict]:
     return None
 
 
-def _find_texture_from_input(material: bpy.types.Material,
-                             input_name: str,
-                             non_color: bool = False) -> Optional[Dict]:
+def _find_texture_from_input(material: bpy.types.Material, input_name: str, non_color: bool = False) -> Optional[Dict]:
     """
     Find Image Texture node connected to a specific Principled BSDF input.
 
@@ -168,7 +168,7 @@ def _find_texture_from_input(material: bpy.types.Material,
     # Find Principled BSDF node
     principled = None
     for node in nodes:
-        if node.type == 'BSDF_PRINCIPLED':
+        if node.type == "BSDF_PRINCIPLED":
             principled = node
             break
 
@@ -188,7 +188,7 @@ def _find_texture_from_input(material: bpy.types.Material,
         for link in links:
             if link.to_socket == socket:
                 from_node = link.from_node
-                if from_node.type == 'TEX_IMAGE' and from_node.image:
+                if from_node.type == "TEX_IMAGE" and from_node.image:
                     return from_node
                 # Check if we can trace through this node (e.g., Normal Map, Invert)
                 if from_node.inputs:
@@ -207,11 +207,11 @@ def _find_texture_from_input(material: bpy.types.Material,
     image = tex_node.image
 
     # Determine tile style from extension mode
-    extension = getattr(tex_node, 'extension', 'REPEAT')
-    if extension == 'CLIP':
+    extension = getattr(tex_node, "extension", "REPEAT")
+    if extension == "CLIP":
         tilestyleu = "clamp"
         tilestylev = "clamp"
-    elif extension == 'EXTEND':
+    elif extension == "EXTEND":
         tilestyleu = "mirror"  # Closest approximation
         tilestylev = "mirror"
     else:
@@ -219,8 +219,8 @@ def _find_texture_from_input(material: bpy.types.Material,
         tilestylev = "wrap"
 
     # Determine filter from interpolation
-    interpolation = getattr(tex_node, 'interpolation', 'Linear')
-    if interpolation == 'Closest':
+    interpolation = getattr(tex_node, "interpolation", "Linear")
+    if interpolation == "Closest":
         filter_mode = "nearest"
     else:
         filter_mode = "auto"
@@ -234,7 +234,9 @@ def _find_texture_from_input(material: bpy.types.Material,
     }
 
 
-def detect_pbr_textured_materials(blender_objects: List[bpy.types.Object]) -> Dict[str, Dict]:
+def detect_pbr_textured_materials(
+    blender_objects: List[bpy.types.Object],
+) -> Dict[str, Dict]:
     """
     Detect materials with PBR texture nodes connected to Principled BSDF.
 
@@ -268,9 +270,9 @@ def detect_pbr_textured_materials(blender_objects: List[bpy.types.Object]) -> Di
 
             # Check for PBR textures
             base_color = _find_base_color_texture(material)
-            roughness = _find_texture_from_input(material, 'Roughness', non_color=True)
-            metallic = _find_texture_from_input(material, 'Metallic', non_color=True)
-            normal = _find_texture_from_input(material, 'Normal', non_color=True)
+            roughness = _find_texture_from_input(material, "Roughness", non_color=True)
+            metallic = _find_texture_from_input(material, "Metallic", non_color=True)
+            normal = _find_texture_from_input(material, "Normal", non_color=True)
 
             # Only include if at least one texture is found
             if base_color or roughness or metallic or normal:
@@ -280,16 +282,15 @@ def detect_pbr_textured_materials(blender_objects: List[bpy.types.Object]) -> Di
                     "metallic": metallic,
                     "normal": normal,
                 }
-                texture_types = [t for t in ["base_color", "roughness", "metallic", "normal"]
-                                 if pbr_materials[material_name][t]]
+                texture_types = [
+                    t for t in ["base_color", "roughness", "metallic", "normal"] if pbr_materials[material_name][t]
+                ]
                 debug(f"Detected PBR material '{material_name}' with textures: {texture_types}")
 
     return pbr_materials
 
 
-def write_textures_to_archive(archive: zipfile.ZipFile,
-                              textured_materials: Dict[str, Dict]
-                              ) -> Dict[str, str]:
+def write_textures_to_archive(archive: zipfile.ZipFile, textured_materials: Dict[str, Dict]) -> Dict[str, str]:
     """
     Write texture images to the 3MF archive.
 
@@ -311,9 +312,9 @@ def write_textures_to_archive(archive: zipfile.ZipFile,
         # Determine output format and path
         # Prefer original format if available, otherwise use PNG
         original_path = tex_info.get("original_path", "")
-        if original_path and original_path.lower().endswith('.jpg'):
+        if original_path and original_path.lower().endswith(".jpg"):
             ext = ".jpg"
-        elif original_path and original_path.lower().endswith('.jpeg'):
+        elif original_path and original_path.lower().endswith(".jpeg"):
             ext = ".jpeg"
         else:
             ext = ".png"
@@ -333,9 +334,9 @@ def write_textures_to_archive(archive: zipfile.ZipFile,
 
             # Determine format for save
             if ext in (".jpg", ".jpeg"):
-                file_format = 'JPEG'
+                file_format = "JPEG"
             else:
-                file_format = 'PNG'
+                file_format = "PNG"
 
             # Save image
             original_filepath = image.filepath_raw
@@ -365,8 +366,7 @@ def write_textures_to_archive(archive: zipfile.ZipFile,
     return image_to_path
 
 
-def write_texture_relationships(archive: zipfile.ZipFile,
-                                image_to_path: Dict[str, str]) -> None:
+def write_texture_relationships(archive: zipfile.ZipFile, image_to_path: Dict[str, str]) -> None:
     """
     Write the model's relationship file to declare texture resources.
 
@@ -380,17 +380,12 @@ def write_texture_relationships(archive: zipfile.ZipFile,
         return
 
     # Create relationships XML
-    relationships_element = xml.etree.ElementTree.Element(
-        f"{{{RELS_NAMESPACE}}}Relationships"
-    )
+    relationships_element = xml.etree.ElementTree.Element(f"{{{RELS_NAMESPACE}}}Relationships")
 
     # Add a relationship for each texture
     rel_id = 1
     for image_name, archive_path in image_to_path.items():
-        rel_element = xml.etree.ElementTree.SubElement(
-            relationships_element,
-            f"{{{RELS_NAMESPACE}}}Relationship"
-        )
+        rel_element = xml.etree.ElementTree.SubElement(relationships_element, f"{{{RELS_NAMESPACE}}}Relationship")
         rel_element.attrib["Type"] = TEXTURE_REL
         rel_element.attrib["Target"] = archive_path
         rel_element.attrib["Id"] = f"rel{rel_id}"
@@ -409,11 +404,13 @@ def write_texture_relationships(archive: zipfile.ZipFile,
     debug(f"Wrote {len(image_to_path)} texture relationships to {rels_path}")
 
 
-def write_texture_resources(resources_element: xml.etree.ElementTree.Element,
-                            textured_materials: Dict[str, Dict],
-                            image_to_path: Dict[str, str],
-                            next_resource_id: int,
-                            precision: int = 6) -> Tuple[Dict[str, int], int]:
+def write_texture_resources(
+    resources_element: xml.etree.ElementTree.Element,
+    textured_materials: Dict[str, Dict],
+    image_to_path: Dict[str, str],
+    next_resource_id: int,
+    precision: int = 6,
+) -> Tuple[Dict[str, int], int]:
     """
     Write texture2d and texture2dgroup elements for textured materials.
 
@@ -444,7 +441,7 @@ def write_texture_resources(resources_element: xml.etree.ElementTree.Element,
             next_resource_id += 1
 
             # Determine content type
-            if archive_path.lower().endswith(('.jpg', '.jpeg')):
+            if archive_path.lower().endswith((".jpg", ".jpeg")):
                 contenttype = TEXTURE_MIMETYPE_JPEG
             else:
                 contenttype = TEXTURE_MIMETYPE_PNG
@@ -534,9 +531,7 @@ def get_or_create_tex2coord(texture_group_data: Dict, u: float, v: float) -> int
     return index
 
 
-def write_pbr_textures_to_archive(archive: zipfile.ZipFile,
-                                  pbr_materials: Dict[str, Dict]
-                                  ) -> Dict[str, str]:
+def write_pbr_textures_to_archive(archive: zipfile.ZipFile, pbr_materials: Dict[str, Dict]) -> Dict[str, str]:
     """
     Write ALL PBR texture images (base_color, roughness, metallic, normal) to the 3MF archive.
 
@@ -554,11 +549,11 @@ def write_pbr_textures_to_archive(archive: zipfile.ZipFile,
     for mat_name, pbr_info in pbr_materials.items():
         # Only process materials that have roughness or metallic textures
         # These are the ones that will use pbmetallictexturedisplayproperties
-        if not pbr_info.get('roughness') and not pbr_info.get('metallic'):
+        if not pbr_info.get("roughness") and not pbr_info.get("metallic"):
             continue
 
         # Include base_color along with PBR channels
-        for channel in ['base_color', 'roughness', 'metallic', 'normal']:
+        for channel in ["base_color", "roughness", "metallic", "normal"]:
             tex_info = pbr_info.get(channel)
             if not tex_info:
                 continue
@@ -572,7 +567,7 @@ def write_pbr_textures_to_archive(archive: zipfile.ZipFile,
             # Determine output format - PBR textures typically stay as-is
             ext = ".png"
             if image.filepath_raw:
-                if image.filepath_raw.lower().endswith(('.jpg', '.jpeg')):
+                if image.filepath_raw.lower().endswith((".jpg", ".jpeg")):
                     ext = ".jpg"
 
             # Sanitize filename
@@ -588,7 +583,7 @@ def write_pbr_textures_to_archive(archive: zipfile.ZipFile,
                 with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
                     tmp_path = tmp.name
 
-                file_format = 'JPEG' if ext in (".jpg", ".jpeg") else 'PNG'
+                file_format = "JPEG" if ext in (".jpg", ".jpeg") else "PNG"
 
                 original_filepath = image.filepath_raw
                 image.filepath_raw = tmp_path
@@ -617,11 +612,11 @@ def write_pbr_textures_to_archive(archive: zipfile.ZipFile,
 
 
 def write_pbr_texture_display_properties(
-        resources_element: xml.etree.ElementTree.Element,
-        pbr_materials: Dict[str, Dict],
-        image_to_path: Dict[str, str],
-        next_resource_id: int,
-        basematerials_element: Optional[xml.etree.ElementTree.Element] = None
+    resources_element: xml.etree.ElementTree.Element,
+    pbr_materials: Dict[str, Dict],
+    image_to_path: Dict[str, str],
+    next_resource_id: int,
+    basematerials_element: Optional[xml.etree.ElementTree.Element] = None,
 ) -> Tuple[Dict[str, str], int]:
     """
     Write pbmetallictexturedisplayproperties elements for PBR materials.
@@ -649,10 +644,10 @@ def write_pbr_texture_display_properties(
         """Helper to create texture2d resource and return its ID."""
         nonlocal next_resource_id
 
-        if not tex_info or not tex_info.get('image'):
+        if not tex_info or not tex_info.get("image"):
             return ""
 
-        image_name = str(tex_info['image'].name)
+        image_name = str(tex_info["image"].name)
         archive_path = image_to_path.get(image_name)
         if not archive_path:
             return ""
@@ -661,7 +656,7 @@ def write_pbr_texture_display_properties(
             tex_id = str(next_resource_id)
             next_resource_id += 1
 
-            is_jpeg = archive_path.lower().endswith(('.jpg', '.jpeg'))
+            is_jpeg = archive_path.lower().endswith((".jpg", ".jpeg"))
             contenttype = TEXTURE_MIMETYPE_JPEG if is_jpeg else TEXTURE_MIMETYPE_PNG
 
             xml.etree.ElementTree.SubElement(
@@ -679,9 +674,9 @@ def write_pbr_texture_display_properties(
         return texture_ids[archive_path]
 
     for mat_name, pbr_info in pbr_materials.items():
-        base_color_tex = pbr_info.get('base_color')
-        roughness_tex = pbr_info.get('roughness')
-        metallic_tex = pbr_info.get('metallic')
+        base_color_tex = pbr_info.get("base_color")
+        roughness_tex = pbr_info.get("roughness")
+        metallic_tex = pbr_info.get("metallic")
 
         # Only create pbmetallictexturedisplayproperties if we have PBR textures
         # (roughness or metallic). Base color alone uses texture2dgroup.

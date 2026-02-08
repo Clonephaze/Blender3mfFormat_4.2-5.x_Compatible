@@ -91,27 +91,40 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         name="Material Export Mode",
         description="How to export material and color data",
         items=[
-            ('STANDARD', 'Standard 3MF', 'Export geometry without material data (maximum compatibility)'),
-            ('BASEMATERIAL', 'Base Material', 'Export one solid color per object using basematerials (simple multi-color prints)'),
-            ('PAINT', 'Paint Segmentation', 'Export UV-painted regions as hash segmentation for multi-material printing (experimental, may be slow)'),
+            (
+                "STANDARD",
+                "Standard 3MF",
+                "Export geometry without material data (maximum compatibility)",
+            ),
+            (
+                "BASEMATERIAL",
+                "Base Material",
+                "Export one solid color per object using basematerials (simple multi-color prints)",
+            ),
+            (
+                "PAINT",
+                "Paint Segmentation",
+                "Export UV-painted regions as hash segmentation for multi-material printing",
+                "(experimental, may be slow)",
+            ),
         ],
-        default='BASEMATERIAL',
+        default="BASEMATERIAL",
     )
 
     export_triangle_sets: bpy.props.BoolProperty(
         name="Export Triangle Sets",
         description="Export Blender face maps as 3MF triangle sets. "
-                    "Triangle sets group triangles for selection workflows and property assignment. "
-                    "Not compatible with multi-material color zone export.",
+        "Triangle sets group triangles for selection workflows and property assignment. "
+        "Not compatible with multi-material color zone export.",
         default=False,
     )
 
     use_components: bpy.props.BoolProperty(
         name="Use Components",
         description="Export linked duplicates as component instances for smaller file sizes. "
-                    "When objects share the same mesh data (Alt+D duplicates), the mesh is exported "
-                    "once and referenced multiple times. Dramatically reduces file size for assemblies "
-                    "with repeated parts.",
+        "When objects share the same mesh data (Alt+D duplicates), the mesh is exported "
+        "once and referenced multiple times. Dramatically reduces file size for assemblies "
+        "with repeated parts.",
         default=True,
     )
 
@@ -119,11 +132,18 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         name="Slicer Format",
         description="Target slicer format for multi-material export",
         items=[
-            ('ORCA', "Orca Slicer / BambuStudio",
-             "Use Production Extension with paint_color attributes (Orca Slicer, BambuStudio, Handy)"),
-            ('PRUSA', "PrusaSlicer / SuperSlicer", "Use mmu_segmentation attributes (PrusaSlicer, SuperSlicer)"),
+            (
+                "ORCA",
+                "Orca Slicer / BambuStudio",
+                "Use Production Extension with paint_color attributes (Orca Slicer, BambuStudio, Handy)",
+            ),
+            (
+                "PRUSA",
+                "PrusaSlicer / SuperSlicer",
+                "Use mmu_segmentation attributes (PrusaSlicer, SuperSlicer)",
+            ),
         ],
-        default='ORCA',
+        default="ORCA",
     )
 
     def invoke(self, context, event):
@@ -136,7 +156,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             self.global_scale = prefs.preferences.default_global_scale
             self.use_orca_format = prefs.preferences.default_multi_material_export
             self.export_triangle_sets = prefs.preferences.default_export_triangle_sets
-        self.report({'INFO'}, "Exporting, please wait...")
+        self.report({"INFO"}, "Exporting, please wait...")
         return super().invoke(context, event)
 
     def draw(self, context):
@@ -149,7 +169,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         orca_box = layout.box()
         orca_box.use_property_split = False
         orca_header = orca_box.row()
-        orca_header.label(text="Multi-Color Printing", icon='COLORSET_01_VEC')
+        orca_header.label(text="Multi-Color Printing", icon="COLORSET_01_VEC")
         orca_row = orca_box.row()
         orca_row.prop(self, "use_orca_format")
         if self.use_orca_format:
@@ -160,7 +180,10 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             # Tips
             info_col = orca_box.column(align=True)
             info_col.scale_y = 0.7
-            info_col.label(text="Tip: Assign different materials to faces in Edit Mode", icon='INFO')
+            info_col.label(
+                text="Tip: Assign different materials to faces in Edit Mode",
+                icon="INFO",
+            )
             info_col.label(text="Each unique color becomes a filament slot in your slicer")
 
         layout.separator()
@@ -185,7 +208,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         :param level: The report level (e.g., {'ERROR'}, {'WARNING'}, {'INFO'})
         :param message: The message to report
         """
-        if hasattr(self, 'report') and callable(getattr(self, 'report', None)):
+        if hasattr(self, "report") and callable(getattr(self, "report", None)):
             self.report(level, message)
         # If report is not available, the message has already been logged via the log module
 
@@ -237,11 +260,11 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             archive.close()
         except EnvironmentError as e:
             error(f"Unable to complete writing to 3MF archive: {e}")
-            self.safe_report({'ERROR'}, f"Unable to complete writing to 3MF archive: {e}")
+            self.safe_report({"ERROR"}, f"Unable to complete writing to 3MF archive: {e}")
             return {"CANCELLED"}
 
         debug(f"Exported {self.num_written} objects to {format_name}3MF archive {self.filepath}.")
-        self.safe_report({'INFO'}, f"Exported {self.num_written} objects to {self.filepath}")
+        self.safe_report({"INFO"}, f"Exported {self.num_written} objects to {self.filepath}")
         return {"FINISHED"}
 
     def execute(self, context: bpy.types.Context) -> Set[str]:
@@ -274,11 +297,11 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             if self.use_selection:
                 blender_objects = context.selected_objects
                 # Validate that at least one mesh object is selected
-                mesh_objects = [obj for obj in blender_objects if obj.type == 'MESH']
+                mesh_objects = [obj for obj in blender_objects if obj.type == "MESH"]
                 if not mesh_objects:
                     self.safe_report(
-                        {'ERROR'},
-                        "No mesh objects selected. Select at least one mesh object to export."
+                        {"ERROR"},
+                        "No mesh objects selected. Select at least one mesh object to export.",
                     )
                     error("Export cancelled: No mesh objects in selection")
                     return {"CANCELLED"}
@@ -286,15 +309,14 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                 blender_objects = context.scene.objects
 
             # Check for non-manifold geometry before export
-            mesh_objects = [obj for obj in blender_objects if obj.type == 'MESH']
+            mesh_objects = [obj for obj in blender_objects if obj.type == "MESH"]
             if mesh_objects:
                 non_manifold_objects = check_non_manifold_geometry(mesh_objects, self.use_mesh_modifiers)
                 if non_manifold_objects:
                     # Early exit check - found at least one issue
                     self.safe_report(
-                        {'WARNING'},
-                        "Exported geometry contains non-manifold issues. "
-                        "This may cause warnings in some slicers."
+                        {"WARNING"},
+                        "Exported geometry contains non-manifold issues. This may cause warnings in some slicers.",
                     )
                     warn(f"Non-manifold geometry detected in: {non_manifold_objects[0]}")
 
@@ -302,10 +324,10 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
 
             # Dispatch to format-specific exporter
             if self.use_orca_format:
-                if self.mmu_slicer_format == 'ORCA':
+                if self.mmu_slicer_format == "ORCA":
                     exporter = OrcaExporter(self)
                     return exporter.execute(context, archive, blender_objects, global_scale)
-                elif self.mmu_slicer_format == 'PRUSA':
+                elif self.mmu_slicer_format == "PRUSA":
                     exporter = PrusaExporter(self)
                     return exporter.execute(context, archive, blender_objects, global_scale)
 
@@ -345,7 +367,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             blender_objects,
             self.use_orca_format,
             self.vertex_colors,
-            self.next_resource_id
+            self.next_resource_id,
         )
         self.material_name_to_index = name_to_index
         return name_to_index
@@ -354,8 +376,15 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         """Write vertices to mesh element. Backward-compatible wrapper."""
         _write_vertices(mesh_element, vertices, self.use_orca_format, self.coordinate_precision)
 
-    def write_triangles(self, mesh_element, triangles, default_material, material_slots,
-                        mesh=None, blender_object=None) -> None:
+    def write_triangles(
+        self,
+        mesh_element,
+        triangles,
+        default_material,
+        material_slots,
+        mesh=None,
+        blender_object=None,
+    ) -> None:
         """Write triangles to mesh element. Backward-compatible wrapper."""
         _write_triangles(
             mesh_element,
@@ -364,13 +393,16 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             material_slots,
             self.material_name_to_index,
             self.use_orca_format,
-            getattr(self, 'mmu_slicer_format', 'ORCA'),
+            getattr(self, "mmu_slicer_format", "ORCA"),
             self.vertex_colors,
             mesh,
             blender_object,
-            getattr(self, 'texture_groups', None),
-            (str(self.material_resource_id)
-             if hasattr(self, 'material_resource_id') and self.material_resource_id else None),
+            getattr(self, "texture_groups", None),
+            (
+                str(self.material_resource_id)
+                if hasattr(self, "material_resource_id") and self.material_resource_id
+                else None
+            ),
             None,  # segmentation_strings - not used in this wrapper
         )
 

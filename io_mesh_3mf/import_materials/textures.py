@@ -31,10 +31,15 @@ import bpy
 from ..utilities import debug, warn, error
 
 if TYPE_CHECKING:
-    from ..import_3mf import Import3MF, ResourceTexture, ResourceMaterial, ResourceTextureGroup
+    from ..import_3mf import (
+        Import3MF,
+        ResourceTexture,
+        ResourceMaterial,
+        ResourceTextureGroup,
+    )
 
 
-def read_textures(op: 'Import3MF', root, material_ns: Dict[str, str]) -> None:
+def read_textures(op: "Import3MF", root, material_ns: Dict[str, str]) -> None:
     """
     Parse <m:texture2d> elements from the 3MF document.
 
@@ -53,14 +58,13 @@ def read_textures(op: 'Import3MF', root, material_ns: Dict[str, str]) -> None:
     from ..import_3mf import ResourceTexture
 
     for texture_item in root.iterfind(
-        "./3mf:resources/m:texture2d",
-        {**MODEL_NAMESPACES, **material_ns}
+        "./3mf:resources/m:texture2d", {**MODEL_NAMESPACES, **material_ns}
     ):
         try:
             texture_id = texture_item.attrib["id"]
         except KeyError:
             warn("Encountered a texture2d without resource ID.")
-            op.safe_report({'WARNING'}, "Encountered a texture2d without resource ID")
+            op.safe_report({"WARNING"}, "Encountered a texture2d without resource ID")
             continue
 
         if texture_id in op.resource_textures:
@@ -91,7 +95,7 @@ def read_textures(op: 'Import3MF', root, material_ns: Dict[str, str]) -> None:
             tilestyleu=tilestyleu,
             tilestylev=tilestylev,
             filter=filter_mode,
-            blender_image=None
+            blender_image=None,
         )
         debug(f"Parsed texture2d {texture_id}: {path} ({contenttype})")
 
@@ -99,8 +103,9 @@ def read_textures(op: 'Import3MF', root, material_ns: Dict[str, str]) -> None:
         debug(f"Found {len(op.resource_textures)} texture2d resources")
 
 
-def read_texture_groups(op: 'Import3MF', root, material_ns: Dict[str, str],
-                        display_properties: Dict) -> None:
+def read_texture_groups(
+    op: "Import3MF", root, material_ns: Dict[str, str], display_properties: Dict
+) -> None:
     """
     Parse <m:texture2dgroup> elements from the 3MF document.
 
@@ -115,14 +120,15 @@ def read_texture_groups(op: 'Import3MF', root, material_ns: Dict[str, str],
     from ..import_3mf import ResourceTextureGroup
 
     for group_item in root.iterfind(
-        "./3mf:resources/m:texture2dgroup",
-        {**MODEL_NAMESPACES, **material_ns}
+        "./3mf:resources/m:texture2dgroup", {**MODEL_NAMESPACES, **material_ns}
     ):
         try:
             group_id = group_item.attrib["id"]
         except KeyError:
             warn("Encountered a texture2dgroup without resource ID.")
-            op.safe_report({'WARNING'}, "Encountered a texture2dgroup without resource ID")
+            op.safe_report(
+                {"WARNING"}, "Encountered a texture2dgroup without resource ID"
+            )
             continue
 
         if group_id in op.resource_texture_groups:
@@ -156,17 +162,17 @@ def read_texture_groups(op: 'Import3MF', root, material_ns: Dict[str, str],
             continue
 
         op.resource_texture_groups[group_id] = ResourceTextureGroup(
-            texid=texid,
-            tex2coords=tex2coords,
-            displaypropertiesid=display_props_id
+            texid=texid, tex2coords=tex2coords, displaypropertiesid=display_props_id
         )
-        debug(f"Parsed texture2dgroup {group_id}: {len(tex2coords)} UVs referencing texture {texid}")
+        debug(
+            f"Parsed texture2dgroup {group_id}: {len(tex2coords)} UVs referencing texture {texid}"
+        )
 
     if op.resource_texture_groups:
         debug(f"Found {len(op.resource_texture_groups)} texture2dgroup resources")
 
 
-def extract_textures_from_archive(op: 'Import3MF', archive_path: str) -> None:
+def extract_textures_from_archive(op: "Import3MF", archive_path: str) -> None:
     """
     Extract texture images from the 3MF archive and create Blender images.
 
@@ -185,11 +191,11 @@ def extract_textures_from_archive(op: 'Import3MF', archive_path: str) -> None:
         return
 
     try:
-        with zipfile.ZipFile(archive_path, 'r') as archive:
+        with zipfile.ZipFile(archive_path, "r") as archive:
             archive_files = archive.namelist()
 
             for texture_id, texture in list(op.resource_textures.items()):
-                tex_path = texture.path.lstrip('/')
+                tex_path = texture.path.lstrip("/")
 
                 if tex_path not in archive_files:
                     warn(f"Texture file not found in archive: {tex_path}")
@@ -225,7 +231,7 @@ def extract_textures_from_archive(op: 'Import3MF', archive_path: str) -> None:
                             tilestyleu=texture.tilestyleu,
                             tilestylev=texture.tilestylev,
                             filter=texture.filter,
-                            blender_image=blender_image
+                            blender_image=blender_image,
                         )
 
                         debug(f"Loaded texture {texture_id}: {image_name}")
@@ -244,8 +250,9 @@ def extract_textures_from_archive(op: 'Import3MF', archive_path: str) -> None:
         error(f"Failed to read textures from archive: {e}")
 
 
-def get_or_create_textured_material(op: 'Import3MF', texture_group_id: str,
-                                    texture_group: 'ResourceTextureGroup') -> Optional['ResourceMaterial']:
+def get_or_create_textured_material(
+    op: "Import3MF", texture_group_id: str, texture_group: "ResourceTextureGroup"
+) -> Optional["ResourceMaterial"]:
     """
     Get or create a ResourceMaterial for a texture group.
 
@@ -283,8 +290,9 @@ def get_or_create_textured_material(op: 'Import3MF', texture_group_id: str,
     )
 
 
-def setup_textured_material(op: 'Import3MF', material: bpy.types.Material,
-                            texture: 'ResourceTexture') -> None:
+def setup_textured_material(
+    op: "Import3MF", material: bpy.types.Material, texture: "ResourceTexture"
+) -> None:
     """
     Set up a Blender material with an Image Texture node for 3MF texture support.
 
@@ -300,32 +308,32 @@ def setup_textured_material(op: 'Import3MF', material: bpy.types.Material,
 
     nodes.clear()
 
-    principled = nodes.new('ShaderNodeBsdfPrincipled')
+    principled = nodes.new("ShaderNodeBsdfPrincipled")
     principled.location = (0, 0)
 
-    output = nodes.new('ShaderNodeOutputMaterial')
+    output = nodes.new("ShaderNodeOutputMaterial")
     output.location = (300, 0)
 
-    tex_node = nodes.new('ShaderNodeTexImage')
+    tex_node = nodes.new("ShaderNodeTexImage")
     tex_node.location = (-300, 0)
     tex_node.image = texture.blender_image
 
     # Set texture extension mode based on tilestyle
     if texture.tilestyleu == "clamp" or texture.tilestylev == "clamp":
-        tex_node.extension = 'CLIP'
+        tex_node.extension = "CLIP"
     elif texture.tilestyleu == "mirror" or texture.tilestylev == "mirror":
-        tex_node.extension = 'EXTEND'
+        tex_node.extension = "EXTEND"
     else:
-        tex_node.extension = 'REPEAT'
+        tex_node.extension = "REPEAT"
 
     # Set interpolation based on filter
     if texture.filter == "nearest":
-        tex_node.interpolation = 'Closest'
+        tex_node.interpolation = "Closest"
     else:
-        tex_node.interpolation = 'Linear'
+        tex_node.interpolation = "Linear"
 
-    links.new(tex_node.outputs['Color'], principled.inputs['Base Color'])
-    links.new(principled.outputs['BSDF'], output.inputs['Surface'])
+    links.new(tex_node.outputs["Color"], principled.inputs["Base Color"])
+    links.new(principled.outputs["BSDF"], output.inputs["Surface"])
 
     material["3mf_texture_tilestyleu"] = texture.tilestyleu or "wrap"
     material["3mf_texture_tilestylev"] = texture.tilestylev or "wrap"

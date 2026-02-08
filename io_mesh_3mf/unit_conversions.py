@@ -22,7 +22,9 @@ __all__ = [
     "threemf_to_metre",
 ]
 
-blender_to_metre: Dict[str, float] = {  # Scale of each of Blender's length units to a metre.
+blender_to_metre: Dict[
+    str, float
+] = {  # Scale of each of Blender's length units to a metre.
     "THOU": 0.0000254,
     "INCHES": 0.0254,
     "FEET": 0.3048,
@@ -41,7 +43,9 @@ blender_to_metre: Dict[str, float] = {  # Scale of each of Blender's length unit
     "KILOMETERS": 1000,
 }
 
-threemf_to_metre: Dict[str, float] = {  # Scale of each of 3MF's length units to a metre.
+threemf_to_metre: Dict[
+    str, float
+] = {  # Scale of each of 3MF's length units to a metre.
     "micron": 0.000001,
     "millimeter": 0.001,
     "centimeter": 0.01,

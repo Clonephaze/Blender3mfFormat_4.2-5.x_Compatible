@@ -237,9 +237,7 @@ def _dilate_pass(buf: np.ndarray, min_neighbors: int) -> np.ndarray:
     return buf
 
 
-def close_gaps_in_texture(
-    buf: np.ndarray, width: int, height: int
-) -> np.ndarray:
+def close_gaps_in_texture(buf: np.ndarray, width: int, height: int) -> np.ndarray:
     """
     Two-pass morphological dilation to seal edge gaps between triangles.
 
@@ -309,8 +307,8 @@ def render_segmentation_to_texture(
     # margin_method='SCALED' scales margins with island size for efficient packing.
     bpy.ops.uv.smart_project(
         angle_limit=1.15192,
-        margin_method='SCALED',
-        rotate_method='AXIS_ALIGNED',
+        margin_method="SCALED",
+        rotate_method="AXIS_ALIGNED",
         island_margin=0.002,
         area_weight=0.6,
         correct_aspect=True,
@@ -327,9 +325,7 @@ def render_segmentation_to_texture(
     all_uvs = uv_flat.reshape(-1, 2)
 
     image_name = f"{obj.name}_segmentation"
-    image = bpy.data.images.new(
-        image_name, width=texture_size, height=texture_size, alpha=True
-    )
+    image = bpy.data.images.new(image_name, width=texture_size, height=texture_size, alpha=True)
 
     # Pre-build color lookup table for fast indexed access.
     max_color_idx = max(extruder_colors.keys()) if extruder_colors else 0
@@ -365,12 +361,8 @@ def render_segmentation_to_texture(
         tree = decode_segmentation_string(seg_string)
         if tree is None:
             decode_failures += 1
-            debug(
-                f"    WARNING: Failed to decode segmentation for face {face_idx}: '{seg_string}'"
-            )
-            render_triangle_to_image(
-                buf, texture_size, texture_size, uv0, uv1, uv2, default_color
-            )
+            debug(f"    WARNING: Failed to decode segmentation for face {face_idx}: '{seg_string}'")
+            render_triangle_to_image(buf, texture_size, texture_size, uv0, uv1, uv2, default_color)
             continue
 
         sub_triangles = subdivide_in_uv_space(uv0, uv1, uv2, tree)
@@ -378,9 +370,7 @@ def render_segmentation_to_texture(
         if not sub_triangles:
             subdivision_failures += 1
             debug(f"    WARNING: Subdivision produced no triangles for face {face_idx}")
-            render_triangle_to_image(
-                buf, texture_size, texture_size, uv0, uv1, uv2, default_color
-            )
+            render_triangle_to_image(buf, texture_size, texture_size, uv0, uv1, uv2, default_color)
             continue
 
         # Two-pass rendering for clean material boundaries:
@@ -388,9 +378,7 @@ def render_segmentation_to_texture(
         #         zero gaps within the face — every pixel is covered).
         # Pass 2: Overdraw only the non-default (painted) sub-triangles on top
         #         so paint always wins at ambiguous boundary pixels.
-        render_triangle_to_image(
-            buf, texture_size, texture_size, uv0, uv1, uv2, default_color
-        )
+        render_triangle_to_image(buf, texture_size, texture_size, uv0, uv1, uv2, default_color)
 
         for sub_uv0, sub_uv1, sub_uv2, state in sub_triangles:
             if state == TriangleState.DEFAULT or state == 0:
@@ -401,9 +389,7 @@ def render_segmentation_to_texture(
             else:
                 color = np.array([0.5, 0.5, 0.5, 1.0], dtype=np.float32)
 
-            render_triangle_to_image(
-                buf, texture_size, texture_size, sub_uv0, sub_uv1, sub_uv2, color
-            )
+            render_triangle_to_image(buf, texture_size, texture_size, sub_uv0, sub_uv1, sub_uv2, color)
 
     # Fill any faces without segmentation with the default color.
     for face_idx, poly in enumerate(mesh.polygons):
@@ -416,9 +402,7 @@ def render_segmentation_to_texture(
         uv0 = all_uvs[loop_indices[0]]
         uv1 = all_uvs[loop_indices[1]]
         uv2 = all_uvs[loop_indices[2]]
-        render_triangle_to_image(
-            buf, texture_size, texture_size, uv0, uv1, uv2, default_color
-        )
+        render_triangle_to_image(buf, texture_size, texture_size, uv0, uv1, uv2, default_color)
 
     if decode_failures > 0 or subdivision_failures > 0:
         debug(

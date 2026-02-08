@@ -24,6 +24,7 @@ from . import (
 
 if _needs_reload:
     import importlib
+
     import_3mf = importlib.reload(import_3mf)
     export_3mf = importlib.reload(export_3mf)
     paint_panel = importlib.reload(paint_panel)
@@ -31,7 +32,10 @@ if _needs_reload:
 
 from .export_3mf import Export3MF  # Exports 3MF files.
 from .import_3mf import Import3MF  # Imports 3MF files.
-from .paint_panel import register as register_paint_panel, unregister as unregister_paint_panel
+from .paint_panel import (
+    register as register_paint_panel,
+    unregister as unregister_paint_panel,
+)
 
 # IDE and Documentation support.
 __all__ = [
@@ -57,6 +61,7 @@ class ThreeMF_FH_import(bpy.types.FileHandler):
 
     Requires Blender 4.2+ (FileHandler API).
     """
+
     bl_idname = "IMPORT_FH_threemf"
     bl_label = "3MF File Handler"
     bl_import_operator = "import_mesh.threemf"
@@ -70,21 +75,24 @@ class ThreeMF_FH_import(bpy.types.FileHandler):
         :param context: The current Blender context
         :return: True if the drop should be handled
         """
-        return context.area and context.area.type in {'VIEW_3D', 'OUTLINER'}
+        return context.area and context.area.type in {"VIEW_3D", "OUTLINER"}
 
 
 class ThreeMFPreferences(bpy.types.AddonPreferences):
     """
     Preferences for the 3MF addon.
     """
+
     bl_idname = __package__
 
     # Precision settings
     default_coordinate_precision: bpy.props.IntProperty(
         name="Coordinate Precision",
-        description=("Number of decimal digits for vertex coordinates. "
-                     "9 = lossless 32-bit float precision (recommended for 3D printing). "
-                     "Lower values reduce file size but may cause manifold issues"),
+        description=(
+            "Number of decimal digits for vertex coordinates. "
+            "9 = lossless 32-bit float precision (recommended for 3D printing). "
+            "Lower values reduce file size but may cause manifold issues"
+        ),
         default=9,
         min=0,
         max=12,
@@ -119,17 +127,25 @@ class ThreeMFPreferences(bpy.types.AddonPreferences):
         name="Material Import Mode",
         description="How to handle materials and multi-material paint data",
         items=[
-            ('MATERIALS', 'Import Materials', 'Import material colors and properties (standard 3MF)'),
-            ('PAINT', 'Import MMU Paint Data', 'Render multi-material segmentation to UV texture for painting (experimental, may be slow)'),
-            ('NONE', 'Geometry Only', 'Skip all material and color data'),
+            (
+                "MATERIALS",
+                "Import Materials",
+                "Import material colors and properties (standard 3MF)",
+            ),
+            (
+                "PAINT",
+                "Import MMU Paint Data",
+                "Render multi-material segmentation to UV texture for painting (experimental, may be slow)",
+            ),
+            ("NONE", "Geometry Only", "Skip all material and color data"),
         ],
-        default='MATERIALS',
+        default="MATERIALS",
     )
 
     default_reuse_materials: bpy.props.BoolProperty(
         name="Reuse Existing Materials",
         description="Match and reuse existing Blender materials by name and color instead of always creating new ones. "
-                    "Prevents material duplication when re-importing edited files",
+        "Prevents material duplication when re-importing edited files",
         default=True,
     )
 
@@ -137,18 +153,18 @@ class ThreeMFPreferences(bpy.types.AddonPreferences):
         name="Import Location",
         description="Default location for imported objects",
         items=[
-            ('ORIGIN', 'World Origin', 'Place at world origin'),
-            ('CURSOR', '3D Cursor', 'Place at 3D cursor'),
-            ('KEEP', 'Keep Original', 'Keep positions from file'),
-            ('GRID', 'Grid Layout', 'Arrange files in a grid (for multi-file import)'),
+            ("ORIGIN", "World Origin", "Place at world origin"),
+            ("CURSOR", "3D Cursor", "Place at 3D cursor"),
+            ("KEEP", "Keep Original", "Keep positions from file"),
+            ("GRID", "Grid Layout", "Arrange files in a grid (for multi-file import)"),
         ],
-        default='KEEP',
+        default="KEEP",
     )
 
     default_grid_spacing: bpy.props.FloatProperty(
         name="Grid Spacing",
         description="Spacing between objects when using Grid Layout placement (in scene units). "
-                    "Objects are arranged in a grid pattern with this gap between them",
+        "Objects are arranged in a grid pattern with this gap between them",
         default=0.1,
         min=0.0,
         soft_max=10.0,
@@ -158,28 +174,44 @@ class ThreeMFPreferences(bpy.types.AddonPreferences):
         name="Origin Placement",
         description="How to set the object origin after import",
         items=[
-            ('KEEP', 'Keep Original', 'Keep origin from 3MF file (typically corner)'),
-            ('CENTER', 'Center of Geometry', 'Move origin to center of bounding box'),
-            ('BOTTOM', 'Bottom Center', 'Move origin to bottom center (useful for placing on surfaces)'),
+            ("KEEP", "Keep Original", "Keep origin from 3MF file (typically corner)"),
+            ("CENTER", "Center of Geometry", "Move origin to center of bounding box"),
+            (
+                "BOTTOM",
+                "Bottom Center",
+                "Move origin to bottom center (useful for placing on surfaces)",
+            ),
         ],
-        default='KEEP',
+        default="KEEP",
     )
 
     default_multi_material_export: bpy.props.EnumProperty(
         name="Material Export Mode",
         description="How to export material and color data to 3MF",
         items=[
-            ('STANDARD', 'Standard 3MF', 'Export basic geometry without material data (maximum compatibility)'),
-            ('BASEMATERIAL', 'Base Material', 'Export one solid color per object (simple multi-color prints)'),
-            ('PAINT', 'Paint Segmentation', 'Export UV-painted regions as hash segmentation (experimental, may be slow)'),
+            (
+                "STANDARD",
+                "Standard 3MF",
+                "Export basic geometry without material data (maximum compatibility)",
+            ),
+            (
+                "BASEMATERIAL",
+                "Base Material",
+                "Export one solid color per object (simple multi-color prints)",
+            ),
+            (
+                "PAINT",
+                "Paint Segmentation",
+                "Export UV-painted regions as hash segmentation (experimental, may be slow)",
+            ),
         ],
-        default='BASEMATERIAL',
+        default="BASEMATERIAL",
     )
 
     default_export_triangle_sets: bpy.props.BoolProperty(
         name="Export Triangle Sets",
         description="Export Blender face maps as 3MF triangle sets by default. "
-                    "Triangle sets group triangles for selection workflows and property assignment",
+        "Triangle sets group triangles for selection workflows and property assignment",
         default=False,
     )
 
@@ -188,36 +220,38 @@ class ThreeMFPreferences(bpy.types.AddonPreferences):
 
         # Precision section
         precision_box = layout.box()
-        precision_box.label(text="Precision", icon='PREFERENCES')
+        precision_box.label(text="Precision", icon="PREFERENCES")
         row = precision_box.row()
         row.prop(self, "default_coordinate_precision")
-        precision_box.label(text="Tip: 9 decimals preserves full 32-bit float precision", icon='INFO')
+        precision_box.label(
+            text="Tip: 9 decimals preserves full 32-bit float precision", icon="INFO"
+        )
 
         # Scale section
         scale_box = layout.box()
-        scale_box.label(text="Scale (Import & Export)", icon='ORIENTATION_GLOBAL')
+        scale_box.label(text="Scale (Import & Export)", icon="ORIENTATION_GLOBAL")
         scale_box.prop(self, "default_global_scale")
 
         # Export behavior section
         export_box = layout.box()
-        export_box.label(text="Export Behavior", icon='EXPORT')
+        export_box.label(text="Export Behavior", icon="EXPORT")
         col = export_box.column(align=True)
-        col.prop(self, "default_export_hidden", icon='HIDE_OFF')
-        col.prop(self, "default_apply_modifiers", icon='MODIFIER')
-        col.prop(self, "default_multi_material_export", icon='COLORSET_01_VEC')
-        col.prop(self, "default_export_triangle_sets", icon='OUTLINER_DATA_GP_LAYER')
+        col.prop(self, "default_export_hidden", icon="HIDE_OFF")
+        col.prop(self, "default_apply_modifiers", icon="MODIFIER")
+        col.prop(self, "default_multi_material_export", icon="COLORSET_01_VEC")
+        col.prop(self, "default_export_triangle_sets", icon="OUTLINER_DATA_GP_LAYER")
 
         # Import behavior section
         import_box = layout.box()
-        import_box.label(text="Import Behavior", icon='IMPORT')
+        import_box.label(text="Import Behavior", icon="IMPORT")
         col = import_box.column(align=True)
-        col.prop(self, "default_import_materials", icon='MATERIAL')
-        col.prop(self, "default_reuse_materials", icon='LINKED')
+        col.prop(self, "default_import_materials", icon="MATERIAL")
+        col.prop(self, "default_reuse_materials", icon="LINKED")
         col.separator()
-        col.label(text="Placement:", icon='OBJECT_ORIGIN')
+        col.label(text="Placement:", icon="OBJECT_ORIGIN")
         col.prop(self, "default_import_location")
         # Show grid spacing only when grid layout is selected
-        if self.default_import_location == 'GRID':
+        if self.default_import_location == "GRID":
             col.prop(self, "default_grid_spacing")
         col.prop(self, "default_origin_to_geometry")
 
