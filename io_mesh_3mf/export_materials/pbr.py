@@ -31,8 +31,10 @@ from ..constants import MATERIAL_NAMESPACE
 from ..utilities import debug
 
 
-def extract_pbr_from_material(material: bpy.types.Material,
-                              principled: bpy_extras.node_shader_utils.PrincipledBSDFWrapper) -> Dict:
+def extract_pbr_from_material(
+    material: bpy.types.Material,
+    principled: bpy_extras.node_shader_utils.PrincipledBSDFWrapper,
+) -> Dict:
     """
     Extract PBR properties from a Blender material's Principled BSDF.
 
@@ -45,6 +47,7 @@ def extract_pbr_from_material(material: bpy.types.Material,
     :param principled: PrincipledBSDFWrapper for the material
     :return: Dictionary with PBR properties for export
     """
+
     # Helper to safely convert values to float (handles MagicMock in unit tests)
     def safe_float(value, default):
         try:
@@ -55,7 +58,7 @@ def extract_pbr_from_material(material: bpy.types.Material,
     def safe_color(value, default):
         """Safely extract RGB tuple from color value."""
         try:
-            if hasattr(value, '__iter__') and len(value) >= 3:
+            if hasattr(value, "__iter__") and len(value) >= 3:
                 return (float(value[0]), float(value[1]), float(value[2]))
             return default
         except (TypeError, ValueError, IndexError):
@@ -82,13 +85,13 @@ def extract_pbr_from_material(material: bpy.types.Material,
     try:
         if material.node_tree:
             for node in material.node_tree.nodes:
-                if node.type == 'BSDF_PRINCIPLED':
-                    if 'Specular Tint' in node.inputs:
-                        tint_input = node.inputs['Specular Tint']
-                        if hasattr(tint_input, 'default_value'):
+                if node.type == "BSDF_PRINCIPLED":
+                    if "Specular Tint" in node.inputs:
+                        tint_input = node.inputs["Specular Tint"]
+                        if hasattr(tint_input, "default_value"):
                             val = tint_input.default_value
                             # Blender 4.x: It's an RGBA color
-                            if hasattr(val, '__iter__') and len(val) >= 3:
+                            if hasattr(val, "__iter__") and len(val) >= 3:
                                 # Check if it's NOT white (default = no tint)
                                 r, g, b = float(val[0]), float(val[1]), float(val[2])
                                 if abs(r - 1.0) > 0.01 or abs(g - 1.0) > 0.01 or abs(b - 1.0) > 0.01:
@@ -125,14 +128,12 @@ def extract_pbr_from_material(material: bpy.types.Material,
     try:
         if material.node_tree:
             for node in material.node_tree.nodes:
-                if node.type == 'BSDF_PRINCIPLED':
+                if node.type == "BSDF_PRINCIPLED":
                     # Blender 4.0+ uses 'Transmission Weight' instead of 'Transmission'
-                    if 'Transmission Weight' in node.inputs:
-                        pbr_data["transmission"] = safe_float(
-                            node.inputs['Transmission Weight'].default_value, 0.0)
-                    elif 'Transmission' in node.inputs:
-                        pbr_data["transmission"] = safe_float(
-                            node.inputs['Transmission'].default_value, 0.0)
+                    if "Transmission Weight" in node.inputs:
+                        pbr_data["transmission"] = safe_float(node.inputs["Transmission Weight"].default_value, 0.0)
+                    elif "Transmission" in node.inputs:
+                        pbr_data["transmission"] = safe_float(node.inputs["Transmission"].default_value, 0.0)
                     break
     except (TypeError, AttributeError):
         # Handle mocked objects in unit tests
@@ -165,11 +166,13 @@ def extract_pbr_from_material(material: bpy.types.Material,
     return pbr_data
 
 
-def write_pbr_display_properties(resources_element: xml.etree.ElementTree.Element,
-                                 basematerials_element: xml.etree.ElementTree.Element,
-                                 basematerials_id: str,
-                                 pbr_materials: List[Tuple[str, Dict]],
-                                 next_resource_id: int) -> int:
+def write_pbr_display_properties(
+    resources_element: xml.etree.ElementTree.Element,
+    basematerials_element: xml.etree.ElementTree.Element,
+    basematerials_id: str,
+    pbr_materials: List[Tuple[str, Dict]],
+    next_resource_id: int,
+) -> int:
     """
     Write PBR display properties for materials.
 

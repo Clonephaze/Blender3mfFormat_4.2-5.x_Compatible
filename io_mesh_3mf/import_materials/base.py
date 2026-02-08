@@ -59,7 +59,7 @@ def parse_hex_color(hex_color: str) -> Tuple[float, float, float, float]:
     :param hex_color: Hex color string like "#FF0000" or "FF0000"
     :return: RGBA tuple with values 0.0-1.0 in linear color space
     """
-    hex_color = hex_color.lstrip('#')
+    hex_color = hex_color.lstrip("#")
     try:
         if len(hex_color) == 6:  # RGB
             r = srgb_to_linear(int(hex_color[0:2], 16) / 255.0)
@@ -79,8 +79,9 @@ def parse_hex_color(hex_color: str) -> Tuple[float, float, float, float]:
     return (0.8, 0.8, 0.8, 1.0)  # Default gray
 
 
-def find_existing_material(op: 'Import3MF', name: str,
-                           color: Tuple[float, float, float, float]) -> Optional[bpy.types.Material]:
+def find_existing_material(
+    op: "Import3MF", name: str, color: Tuple[float, float, float, float]
+) -> Optional[bpy.types.Material]:
     """
     Find an existing Blender material that matches the given name and color.
 
@@ -114,7 +115,7 @@ def find_existing_material(op: 'Import3MF', name: str,
     return None
 
 
-def read_materials(op: 'Import3MF', root, material_ns: dict, display_properties: dict) -> None:
+def read_materials(op: "Import3MF", root, material_ns: dict, display_properties: dict) -> None:
     """
     Read basematerials and colorgroup elements from the 3MF document.
 
@@ -129,18 +130,16 @@ def read_materials(op: 'Import3MF', root, material_ns: dict, display_properties:
     from ..import_3mf import ResourceMaterial
 
     # Import core spec basematerials
-    for basematerials_item in root.iterfind(
-        "./3mf:resources/3mf:basematerials", MODEL_NAMESPACES
-    ):
+    for basematerials_item in root.iterfind("./3mf:resources/3mf:basematerials", MODEL_NAMESPACES):
         try:
             material_id = basematerials_item.attrib["id"]
         except KeyError:
             warn("Encountered a basematerials item without resource ID.")
-            op.safe_report({'WARNING'}, "Encountered a basematerials item without resource ID")
+            op.safe_report({"WARNING"}, "Encountered a basematerials item without resource ID")
             continue
         if material_id in op.resource_materials:
             warn(f"Duplicate material ID: {material_id}")
-            op.safe_report({'WARNING'}, f"Duplicate material ID: {material_id}")
+            op.safe_report({"WARNING"}, f"Duplicate material ID: {material_id}")
             continue
 
         # Check for PBR display properties reference at the group level
@@ -150,9 +149,7 @@ def read_materials(op: 'Import3MF', root, material_ns: dict, display_properties:
         op.resource_materials[material_id] = {}
         index = 0
 
-        for base_item in basematerials_item.iterfind(
-            "./3mf:base", MODEL_NAMESPACES
-        ):
+        for base_item in basematerials_item.iterfind("./3mf:base", MODEL_NAMESPACES):
             name = base_item.attrib.get("name", "3MF Material")
             color = base_item.attrib.get("displaycolor")
 
@@ -189,12 +186,25 @@ def read_materials(op: 'Import3MF', root, material_ns: dict, display_properties:
                     # 3MF hex colors are sRGB — convert RGB to linear for Blender.
                     # Alpha is linear in both spaces and is NOT converted.
                     if len(color) == 6:
-                        color = (srgb_to_linear(b3), srgb_to_linear(b2), srgb_to_linear(b1), 1.0)
+                        color = (
+                            srgb_to_linear(b3),
+                            srgb_to_linear(b2),
+                            srgb_to_linear(b1),
+                            1.0,
+                        )
                     else:
-                        color = (srgb_to_linear(b4), srgb_to_linear(b3), srgb_to_linear(b2), b1)
+                        color = (
+                            srgb_to_linear(b4),
+                            srgb_to_linear(b3),
+                            srgb_to_linear(b2),
+                            b1,
+                        )
                 except ValueError:
                     warn(f"Invalid color for material {name} of resource {material_id}: {color}")
-                    op.safe_report({'WARNING'}, f"Invalid color for material {name} of resource {material_id}: {color}")
+                    op.safe_report(
+                        {"WARNING"},
+                        f"Invalid color for material {name} of resource {material_id}: {color}",
+                    )
                     color = None
 
             # Extract textured PBR texture IDs if present
@@ -249,8 +259,10 @@ def read_materials(op: 'Import3MF', root, material_ns: dict, display_properties:
             if pbr_data:
                 debug(f"Material '{name}' has PBR properties: {pbr_data}")
             if textured_pbr:
-                debug(f"Material '{name}' has textured PBR: metallic_tex={metallic_texid}, "
-                      f"roughness_tex={roughness_texid}, basecolor_tex={basecolor_texid}")
+                debug(
+                    f"Material '{name}' has textured PBR: metallic_tex={metallic_texid}, "
+                    f"roughness_tex={roughness_texid}, basecolor_tex={basecolor_texid}"
+                )
 
             index += 1
 
@@ -261,7 +273,7 @@ def read_materials(op: 'Import3MF', root, material_ns: dict, display_properties:
     _read_colorgroups(op, root, material_ns, display_properties)
 
 
-def _read_colorgroups(op: 'Import3MF', root, material_ns: dict, display_properties: dict) -> None:
+def _read_colorgroups(op: "Import3MF", root, material_ns: dict, display_properties: dict) -> None:
     """
     Read colorgroup elements from the 3MF document.
 
@@ -273,20 +285,17 @@ def _read_colorgroups(op: 'Import3MF', root, material_ns: dict, display_properti
     from ..constants import MODEL_NAMESPACES
     from ..import_3mf import ResourceMaterial, ResourceColorgroup
 
-    for colorgroup_item in root.iterfind(
-        "./3mf:resources/m:colorgroup",
-        {**MODEL_NAMESPACES, **material_ns}
-    ):
+    for colorgroup_item in root.iterfind("./3mf:resources/m:colorgroup", {**MODEL_NAMESPACES, **material_ns}):
         try:
             colorgroup_id = colorgroup_item.attrib["id"]
         except KeyError:
             warn("Encountered a colorgroup without resource ID.")
-            op.safe_report({'WARNING'}, "Encountered a colorgroup without resource ID")
+            op.safe_report({"WARNING"}, "Encountered a colorgroup without resource ID")
             continue
 
         if colorgroup_id in op.resource_materials:
             warn(f"Duplicate material ID: {colorgroup_id}")
-            op.safe_report({'WARNING'}, f"Duplicate material ID: {colorgroup_id}")
+            op.safe_report({"WARNING"}, f"Duplicate material ID: {colorgroup_id}")
             continue
 
         display_props_id = colorgroup_item.attrib.get("displaypropertiesid")
@@ -316,7 +325,7 @@ def _read_colorgroups(op: 'Import3MF', root, material_ns: dict, display_properti
                         alpha = int(color[6:8], 16) / 255  # Alpha is linear
                     else:
                         warn(f"Invalid color for colorgroup {colorgroup_id}: #{color}")
-                        op.safe_report({'WARNING'}, f"Invalid color: #{color}")
+                        op.safe_report({"WARNING"}, f"Invalid color: #{color}")
                         continue
 
                     pbr_data = pbr_props_list[index] if index < len(pbr_props_list) else {}
@@ -345,14 +354,13 @@ def _read_colorgroups(op: 'Import3MF', root, material_ns: dict, display_properti
 
         if raw_colors:
             op.resource_colorgroups[colorgroup_id] = ResourceColorgroup(
-                colors=raw_colors,
-                displaypropertiesid=display_props_id
+                colors=raw_colors, displaypropertiesid=display_props_id
             )
             debug(f"Stored colorgroup {colorgroup_id} for round-trip ({len(raw_colors)} colors)")
 
         if index > 0:
             debug(f"Imported colorgroup {colorgroup_id} with {index} colors")
             if op.vendor_format == "orca":
-                op.safe_report({'INFO'}, f"Imported Orca color zone: {index} color(s)")
+                op.safe_report({"INFO"}, f"Imported Orca color zone: {index} color(s)")
         elif colorgroup_id in op.resource_materials:
             del op.resource_materials[colorgroup_id]

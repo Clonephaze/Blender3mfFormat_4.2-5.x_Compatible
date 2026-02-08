@@ -1,4 +1,3 @@
-
 # Blender add-on to import and export 3MF files.
 # Copyright (C) 2020 Ghostkeeper
 # Copyright (C) 2025 Jack (modernization for Blender 4.2+)
@@ -162,7 +161,9 @@ class Metadata:
         for metadata_entry in self.values():
             # Cache metadata name and value to protect Unicode characters from garbage collection
             name = str(metadata_entry.name)
-            value = str(metadata_entry.value) if metadata_entry.value is not None else ""
+            value = (
+                str(metadata_entry.value) if metadata_entry.value is not None else ""
+            )
             if (
                 name == "Title"
             ):  # Has a built-in ID property for objects as well as scenes.
@@ -173,14 +174,20 @@ class Metadata:
                 blender_object[name] = value
             else:
                 # Cache datatype to protect Unicode characters from garbage collection
-                datatype = str(metadata_entry.datatype) if metadata_entry.datatype is not None else ""
+                datatype = (
+                    str(metadata_entry.datatype)
+                    if metadata_entry.datatype is not None
+                    else ""
+                )
                 blender_object[name] = {
                     "datatype": datatype,
                     "preserve": metadata_entry.preserve,
                     "value": value,
                 }
 
-    def retrieve(self, blender_object: Union[bpy.types.Object, bpy.types.Scene]) -> None:
+    def retrieve(
+        self, blender_object: Union[bpy.types.Object, bpy.types.Scene]
+    ) -> None:
         """
         Retrieve metadata from a Blender object.
 
@@ -198,7 +205,10 @@ class Metadata:
                 # Cache entry value to protect Unicode characters
                 cached_entry = str(entry)
                 self[cached_key] = MetadataEntry(
-                    name=cached_key, preserve=True, datatype="xs:string", value=cached_entry
+                    name=cached_key,
+                    preserve=True,
+                    datatype="xs:string",
+                    value=cached_entry,
                 )
                 continue
             if (

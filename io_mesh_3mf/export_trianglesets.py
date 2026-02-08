@@ -28,8 +28,7 @@ from .utilities import debug
 
 
 def write_triangle_sets(
-    mesh_element: xml.etree.ElementTree.Element,
-    mesh: bpy.types.Mesh
+    mesh_element: xml.etree.ElementTree.Element, mesh: bpy.types.Mesh
 ) -> None:
     """
     Writes triangle sets from Blender mesh attributes into the mesh element.
@@ -75,8 +74,7 @@ def write_triangle_sets(
             set_name = f"TriangleSet_{set_idx}"
 
         triangleset_element = xml.etree.ElementTree.SubElement(
-            trianglesets_element,
-            f"{{{TRIANGLE_SETS_NAMESPACE}}}triangleset"
+            trianglesets_element, f"{{{TRIANGLE_SETS_NAMESPACE}}}triangleset"
         )
         triangleset_element.attrib["name"] = set_name
         triangleset_element.attrib["identifier"] = set_name
@@ -94,18 +92,18 @@ def write_triangle_sets(
 
             if end - start >= 2:
                 refrange_element = xml.etree.ElementTree.SubElement(
-                    triangleset_element,
-                    f"{{{TRIANGLE_SETS_NAMESPACE}}}refrange"
+                    triangleset_element, f"{{{TRIANGLE_SETS_NAMESPACE}}}refrange"
                 )
                 refrange_element.attrib["startindex"] = str(start)
                 refrange_element.attrib["endindex"] = str(end)
             else:
                 for idx in range(start, end + 1):
                     ref_element = xml.etree.ElementTree.SubElement(
-                        triangleset_element,
-                        f"{{{TRIANGLE_SETS_NAMESPACE}}}ref"
+                        triangleset_element, f"{{{TRIANGLE_SETS_NAMESPACE}}}ref"
                     )
                     ref_element.attrib["index"] = str(idx)
             i += 1
 
-        debug(f"Exported triangle set '{set_name}' with {len(triangle_indices)} triangles")
+        debug(
+            f"Exported triangle set '{set_name}' with {len(triangle_indices)} triangles"
+        )

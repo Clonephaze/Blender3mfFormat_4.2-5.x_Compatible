@@ -87,6 +87,7 @@ from .export_trianglesets import write_triangle_sets  # noqa: F401
 # Archive Management
 # =============================================================================
 
+
 def create_archive(filepath: str, safe_report) -> Optional[zipfile.ZipFile]:
     """
     Creates an empty 3MF archive.
@@ -109,7 +110,7 @@ def create_archive(filepath: str, safe_report) -> Optional[zipfile.ZipFile]:
         must_preserve(archive)
     except EnvironmentError as e:
         error(f"Unable to write 3MF archive to {filepath}: {e}")
-        safe_report({'ERROR'}, f"Unable to write 3MF archive to {filepath}: {e}")
+        safe_report({"ERROR"}, f"Unable to write 3MF archive to {filepath}: {e}")
         return None
 
     return archive
@@ -166,7 +167,9 @@ def write_core_properties(archive: zipfile.ZipFile) -> None:
     created.text = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # dcterms:modified - when the file was last modified
-    modified = xml.etree.ElementTree.SubElement(root, f"{{{DCTERMS_NAMESPACE}}}modified")
+    modified = xml.etree.ElementTree.SubElement(
+        root, f"{{{DCTERMS_NAMESPACE}}}modified"
+    )
     modified.text = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Write the Core Properties file
@@ -202,7 +205,7 @@ def write_thumbnail(archive: zipfile.ZipFile) -> None:
         view3d_area = None
         for window in bpy.context.window_manager.windows:
             for area in window.screen.areas:
-                if area.type == 'VIEW_3D':
+                if area.type == "VIEW_3D":
                     view3d_area = area
                     break
             if view3d_area:
@@ -213,7 +216,7 @@ def write_thumbnail(archive: zipfile.ZipFile) -> None:
             return
 
         # Create a temporary file for the render
-        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             temp_path = tmp.name
 
         # Store original render settings
@@ -229,27 +232,31 @@ def write_thumbnail(archive: zipfile.ZipFile) -> None:
             scene.render.resolution_x = thumb_width
             scene.render.resolution_y = thumb_height
             scene.render.resolution_percentage = 100
-            scene.render.image_settings.file_format = 'PNG'
+            scene.render.image_settings.file_format = "PNG"
             scene.render.filepath = temp_path
 
             # Render viewport (much faster than full render)
             # Use OpenGL render which captures the viewport
             override = bpy.context.copy()
-            override['area'] = view3d_area
-            override['region'] = [r for r in view3d_area.regions if r.type == 'WINDOW'][0]
+            override["area"] = view3d_area
+            override["region"] = [r for r in view3d_area.regions if r.type == "WINDOW"][
+                0
+            ]
 
             with bpy.context.temp_override(**override):
                 bpy.ops.render.opengl(write_still=True)
 
             # Read the rendered PNG
-            with open(temp_path, 'rb') as png_file:
+            with open(temp_path, "rb") as png_file:
                 png_data = png_file.read()
 
             # Write to 3MF archive
             with archive.open("Metadata/thumbnail.png", "w") as f:
                 f.write(png_data)
 
-            debug(f"Wrote thumbnail.png ({thumb_width}x{thumb_height}) from viewport render")
+            debug(
+                f"Wrote thumbnail.png ({thumb_width}x{thumb_height}) from viewport render"
+            )
 
         finally:
             # Restore original settings
@@ -273,6 +280,7 @@ def write_thumbnail(archive: zipfile.ZipFile) -> None:
 # =============================================================================
 # Unit Conversion
 # =============================================================================
+
 
 def unit_scale(context: bpy.types.Context, global_scale: float) -> float:
     """
@@ -300,8 +308,10 @@ def unit_scale(context: bpy.types.Context, global_scale: float) -> float:
 # Geometry Writing
 # =============================================================================
 
-def check_non_manifold_geometry(blender_objects: List[bpy.types.Object],
-                                use_mesh_modifiers: bool) -> List[str]:
+
+def check_non_manifold_geometry(
+    blender_objects: List[bpy.types.Object], use_mesh_modifiers: bool
+) -> List[str]:
     """
     Check mesh objects for non-manifold geometry using BMesh.
 
@@ -316,7 +326,7 @@ def check_non_manifold_geometry(blender_objects: List[bpy.types.Object],
     :return: List with first object name that has non-manifold geometry, or empty list.
     """
     for blender_object in blender_objects:
-        if blender_object.type != 'MESH':
+        if blender_object.type != "MESH":
             continue
 
         # Get mesh data with modifiers applied if needed
@@ -370,19 +380,17 @@ def format_transformation(transformation: mathutils.Matrix) -> str:
     :param transformation: The transformation matrix to format.
     :return: A serialisation of the transformation matrix.
     """
-    pieces = (
-        row[:3] for row in transformation.transposed()
-    )
-    formatted_cells = [
-        f"{cell:.9f}" for cell in itertools.chain.from_iterable(pieces)
-    ]
+    pieces = (row[:3] for row in transformation.transposed())
+    formatted_cells = [f"{cell:.9f}" for cell in itertools.chain.from_iterable(pieces)]
     return " ".join(formatted_cells)
 
 
-def write_vertices(mesh_element: xml.etree.ElementTree.Element,
-                   vertices: List[bpy.types.MeshVertex],
-                   use_orca_format: str,  # 'PAINT', 'BASEMATERIAL', or 'STANDARD'
-                   coordinate_precision: int) -> None:
+def write_vertices(
+    mesh_element: xml.etree.ElementTree.Element,
+    vertices: List[bpy.types.MeshVertex],
+    use_orca_format: str,  # 'PAINT', 'BASEMATERIAL', or 'STANDARD'
+    coordinate_precision: int,
+) -> None:
     """
     Writes a list of vertices into the specified mesh element.
 
@@ -396,7 +404,7 @@ def write_vertices(mesh_element: xml.etree.ElementTree.Element,
     )
 
     vertex_name = f"{{{MODEL_NAMESPACE}}}vertex"
-    if use_orca_format in ('PAINT', 'BASEMATERIAL'):
+    if use_orca_format in ("PAINT", "BASEMATERIAL"):
         # PAINT and BASEMATERIAL modes use short attribute names
         x_name = "x"
         y_name = "y"
@@ -409,9 +417,7 @@ def write_vertices(mesh_element: xml.etree.ElementTree.Element,
 
     decimals = coordinate_precision
     for vertex in vertices:
-        vertex_element = xml.etree.ElementTree.SubElement(
-            vertices_element, vertex_name
-        )
+        vertex_element = xml.etree.ElementTree.SubElement(vertices_element, vertex_name)
         vertex_element.attrib[x_name] = f"{vertex.co[0]:.{decimals}}"
         vertex_element.attrib[y_name] = f"{vertex.co[1]:.{decimals}}"
         vertex_element.attrib[z_name] = f"{vertex.co[2]:.{decimals}}"
@@ -430,7 +436,7 @@ def write_triangles(
     blender_object: Optional[bpy.types.Object] = None,
     texture_groups: Optional[Dict[str, Dict]] = None,
     basematerials_resource_id: Optional[str] = None,
-    segmentation_strings: Optional[Dict[int, str]] = None
+    segmentation_strings: Optional[Dict[int, str]] = None,
 ) -> None:
     """
     Writes a list of triangles into the specified mesh element.
@@ -449,14 +455,17 @@ def write_triangles(
     :param basematerials_resource_id: The ID of the basematerials resource for per-face material refs.
     :param segmentation_strings: Dict of face_index -> segmentation hash string (for PAINT mode).
     """
-    debug(f"[write_triangles] mode={use_orca_format}, slicer={mmu_slicer_format}, seg_strings={len(segmentation_strings) if segmentation_strings else 0}")
-    
+    debug(
+        f"[write_triangles] mode={use_orca_format}, slicer={mmu_slicer_format},",
+        f" seg_strings={len(segmentation_strings) if segmentation_strings else 0}"
+    )
+
     triangles_element = xml.etree.ElementTree.SubElement(
         mesh_element, f"{{{MODEL_NAMESPACE}}}triangles"
     )
 
     triangle_name = f"{{{MODEL_NAMESPACE}}}triangle"
-    if use_orca_format in ('PAINT', 'BASEMATERIAL'):
+    if use_orca_format in ("PAINT", "BASEMATERIAL"):
         # PAINT and BASEMATERIAL modes use short attribute names
         v1_name = "v1"
         v2_name = "v2"
@@ -482,7 +491,7 @@ def write_triangles(
 
     # Track how many segmentation strings we actually write
     seg_strings_written = 0
-    
+
     for tri_idx, triangle in enumerate(triangles):
         triangle_element = xml.etree.ElementTree.SubElement(
             triangles_element, triangle_name
@@ -496,7 +505,7 @@ def write_triangles(
         if segmentation_strings and triangle.polygon_index in segmentation_strings:
             seg_string = segmentation_strings[triangle.polygon_index]
             if seg_string:
-                if mmu_slicer_format == 'PRUSA':
+                if mmu_slicer_format == "PRUSA":
                     # PrusaSlicer format: use mmu_segmentation attribute
                     ns_attr = "{http://schemas.slic3r.org/3mf/2017/06}mmu_segmentation"
                     triangle_element.attrib[ns_attr] = seg_string
@@ -506,14 +515,19 @@ def write_triangles(
                     triangle_element.attrib["paint_color"] = seg_string
                     seg_strings_written += 1
                 continue  # Skip other material handling for this triangle
-        
+
         # Handle multi-material color zones (BASEMATERIAL mode only)
-        if use_orca_format == 'BASEMATERIAL' and vertex_colors and mesh and blender_object:
+        if (
+            use_orca_format == "BASEMATERIAL"
+            and vertex_colors
+            and mesh
+            and blender_object
+        ):
             triangle_color = get_triangle_color(mesh, triangle, blender_object)
             if triangle_color and triangle_color in vertex_colors:
                 colorgroup_id = vertex_colors[triangle_color]
 
-                if mmu_slicer_format == 'PRUSA':
+                if mmu_slicer_format == "PRUSA":
                     # PrusaSlicer format: use mmu_segmentation attribute
                     if colorgroup_id < len(ORCA_FILAMENT_CODES):
                         paint_code = ORCA_FILAMENT_CODES[colorgroup_id]
@@ -536,7 +550,11 @@ def write_triangles(
                 triangle_material_name = str(triangle_material.name)
 
                 # Check if this is a textured material
-                if texture_groups and triangle_material_name in texture_groups and uv_layer:
+                if (
+                    texture_groups
+                    and triangle_material_name in texture_groups
+                    and uv_layer
+                ):
                     # Textured material - use texture2dgroup with UV indices
                     group_data = texture_groups[triangle_material_name]
                     group_id = group_data["group_id"]
@@ -567,28 +585,36 @@ def write_triangles(
                         # Must write pid along with p1 per 3MF spec, so import knows
                         # which basematerials group to look up the index in
                         if basematerials_resource_id:
-                            triangle_element.attrib[pid_name] = str(basematerials_resource_id)
+                            triangle_element.attrib[pid_name] = str(
+                                basematerials_resource_id
+                            )
                         triangle_element.attrib[p1_name] = str(material_index)
 
     # Log summary of segmentation string writing
     if segmentation_strings:
-        debug(f"  [write_triangles] Wrote {seg_strings_written} segmentation strings to triangles (had {len(segmentation_strings)} available)")
+        debug(
+            f"  [write_triangles] Wrote {seg_strings_written} segmentation strings",
+            f"to triangles (had {len(segmentation_strings)} available)"
+        )
 
 
 # =============================================================================
 # Metadata Writing
 # =============================================================================
 
-def write_metadata(node: xml.etree.ElementTree.Element, metadata: Metadata,
-                   use_orca_format: str) -> None:  # 'PAINT', 'BASEMATERIAL', or 'STANDARD'
+
+def write_metadata(
+    node: xml.etree.ElementTree.Element, metadata: Metadata, use_orca_format: str
+) -> None:  # 'PAINT', 'BASEMATERIAL', or 'STANDARD'
     """
     Writes metadata from a metadata storage into an XML node.
     :param node: The node to add <metadata> tags to.
     :param metadata: The collection of metadata to write to that node.
     :param use_orca_format: Material export mode - affects namespace handling.
     """
+
     def attr(name: str) -> str:
-        if use_orca_format in ('PAINT', 'BASEMATERIAL'):
+        if use_orca_format in ("PAINT", "BASEMATERIAL"):
             return name
         return f"{{{MODEL_NAMESPACE}}}{name}"
 
@@ -597,7 +623,9 @@ def write_metadata(node: xml.etree.ElementTree.Element, metadata: Metadata,
             node, f"{{{MODEL_NAMESPACE}}}metadata"
         )
         metadata_name = str(metadata_entry.name)
-        metadata_value = str(metadata_entry.value) if metadata_entry.value is not None else ""
+        metadata_value = (
+            str(metadata_entry.value) if metadata_entry.value is not None else ""
+        )
         metadata_node.attrib[attr("name")] = metadata_name
         if metadata_entry.preserve:
             metadata_node.attrib[attr("preserve")] = "1"

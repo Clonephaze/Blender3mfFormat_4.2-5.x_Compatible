@@ -23,7 +23,7 @@ from typing import Tuple
 #  Debug logging
 # ---------------------------------------------------------------------------
 
-DEBUG_MODE = True
+DEBUG_MODE = False
 """Set to True to enable verbose console output for development/debugging."""
 
 
@@ -46,6 +46,7 @@ def error(*args, **kwargs):
 # ---------------------------------------------------------------------------
 #  Color space conversion
 # ---------------------------------------------------------------------------
+
 
 def srgb_to_linear(c: float) -> float:
     """Convert a single sRGB gamma component to linear.
@@ -72,6 +73,7 @@ def linear_to_srgb(c: float) -> float:
 # ---------------------------------------------------------------------------
 #  Hex / RGB helpers
 # ---------------------------------------------------------------------------
+
 
 def hex_to_rgb(hex_str: str) -> Tuple[float, float, float]:
     """Convert ``#RRGGBB`` hex string to an ``(r, g, b)`` tuple of 0-1 floats.

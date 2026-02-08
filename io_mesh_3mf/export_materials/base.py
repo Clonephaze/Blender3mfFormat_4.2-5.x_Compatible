@@ -37,9 +37,39 @@ from ..utilities import debug, warn, linear_to_srgb
 # This matches CONST_FILAMENTS in OrcaSlicer's Model.cpp
 # Index 0 = no color (base extruder), 1-32 = filament IDs
 ORCA_FILAMENT_CODES = [
-    "", "4", "8", "0C", "1C", "2C", "3C", "4C", "5C", "6C", "7C", "8C", "9C", "AC", "BC", "CC", "DC",
-    "EC", "0FC", "1FC", "2FC", "3FC", "4FC", "5FC", "6FC", "7FC", "8FC", "9FC", "AFC", "BFC",
-    "CFC", "DFC", "EFC",
+    "",
+    "4",
+    "8",
+    "0C",
+    "1C",
+    "2C",
+    "3C",
+    "4C",
+    "5C",
+    "6C",
+    "7C",
+    "8C",
+    "9C",
+    "AC",
+    "BC",
+    "CC",
+    "DC",
+    "EC",
+    "0FC",
+    "1FC",
+    "2FC",
+    "3FC",
+    "4FC",
+    "5FC",
+    "6FC",
+    "7FC",
+    "8FC",
+    "9FC",
+    "AFC",
+    "BFC",
+    "CFC",
+    "DFC",
+    "EFC",
 ]
 
 
@@ -61,14 +91,12 @@ def material_to_hex_color(material: bpy.types.Material) -> Optional[str]:
 
     # Try Principled BSDF first for materials with node setup
     if material.use_nodes and material.node_tree:
-        principled = bpy_extras.node_shader_utils.PrincipledBSDFWrapper(
-            material, is_readonly=True
-        )
+        principled = bpy_extras.node_shader_utils.PrincipledBSDFWrapper(material, is_readonly=True)
         base_color = principled.base_color
         # Check if it's not the default gray (0.8, 0.8, 0.8)
-        if (base_color and not (abs(base_color[0] - 0.8) < 0.01
-                                and abs(base_color[1] - 0.8) < 0.01
-                                and abs(base_color[2] - 0.8) < 0.01)):
+        if base_color and not (
+            abs(base_color[0] - 0.8) < 0.01 and abs(base_color[1] - 0.8) < 0.01 and abs(base_color[2] - 0.8) < 0.01
+        ):
             color = base_color
 
     # Fall back to diffuse_color for simple materials
@@ -83,8 +111,11 @@ def material_to_hex_color(material: bpy.types.Material) -> Optional[str]:
     return "#%0.2X%0.2X%0.2X" % (red, green, blue)
 
 
-def get_triangle_color(mesh: bpy.types.Mesh, triangle: bpy.types.MeshLoopTriangle,
-                       blender_object: bpy.types.Object) -> Optional[str]:
+def get_triangle_color(
+    mesh: bpy.types.Mesh,
+    triangle: bpy.types.MeshLoopTriangle,
+    blender_object: bpy.types.Object,
+) -> Optional[str]:
     """
     Get the color for a specific triangle from its face's material assignment.
 
@@ -99,9 +130,9 @@ def get_triangle_color(mesh: bpy.types.Mesh, triangle: bpy.types.MeshLoopTriangl
     return None
 
 
-def collect_face_colors(blender_objects: List[bpy.types.Object],
-                        use_mesh_modifiers: bool,
-                        safe_report) -> Dict[str, int]:
+def collect_face_colors(
+    blender_objects: List[bpy.types.Object], use_mesh_modifiers: bool, safe_report
+) -> Dict[str, int]:
     """
     Collect unique face colors from all objects for Orca color zone export.
 
@@ -117,7 +148,7 @@ def collect_face_colors(blender_objects: List[bpy.types.Object],
     objects_processed = 0
 
     for blender_object in blender_objects:
-        if blender_object.type != 'MESH':
+        if blender_object.type != "MESH":
             continue
 
         objects_processed += 1
@@ -168,20 +199,24 @@ def collect_face_colors(blender_objects: List[bpy.types.Object],
 
     # Report to user
     if objects_processed == 0:
-        safe_report({'WARNING'}, "No mesh objects found to export")
+        safe_report({"WARNING"}, "No mesh objects found to export")
     else:
-        safe_report({'INFO'}, f"Found {len(unique_colors)} unique colors across {objects_processed} objects")
+        safe_report(
+            {"INFO"},
+            f"Found {len(unique_colors)} unique colors across {objects_processed} objects",
+        )
 
     return color_to_index
 
 
-def write_materials(resources_element: xml.etree.ElementTree.Element,
-                    blender_objects: List[bpy.types.Object],
-                    use_orca_format: bool,
-                    vertex_colors: Dict[str, int],
-                    next_resource_id: int,
-                    export_pbr: bool = True
-                    ) -> Tuple[Dict[str, int], int, str, Optional[xml.etree.ElementTree.Element]]:
+def write_materials(
+    resources_element: xml.etree.ElementTree.Element,
+    blender_objects: List[bpy.types.Object],
+    use_orca_format: bool,
+    vertex_colors: Dict[str, int],
+    next_resource_id: int,
+    export_pbr: bool = True,
+) -> Tuple[Dict[str, int], int, str, Optional[xml.etree.ElementTree.Element]]:
     """
     Write the materials on the specified blender objects to a 3MF document.
 
@@ -258,9 +293,7 @@ def write_materials(resources_element: xml.etree.ElementTree.Element,
                 continue
 
             # Read linear color from Blender and convert to sRGB for 3MF hex.
-            principled = bpy_extras.node_shader_utils.PrincipledBSDFWrapper(
-                material, is_readonly=True
-            )
+            principled = bpy_extras.node_shader_utils.PrincipledBSDFWrapper(material, is_readonly=True)
             color = principled.base_color
             red = min(255, max(0, round(linear_to_srgb(color[0]) * 255)))
             green = min(255, max(0, round(linear_to_srgb(color[1]) * 255)))
@@ -300,8 +333,11 @@ def write_materials(resources_element: xml.etree.ElementTree.Element,
     # Write PBR display properties if we have any meaningful PBR data
     if export_pbr and pbr_materials and basematerials_element is not None:
         next_resource_id = write_pbr_display_properties(
-            resources_element, basematerials_element, material_resource_id,
-            pbr_materials, next_resource_id
+            resources_element,
+            basematerials_element,
+            material_resource_id,
+            pbr_materials,
+            next_resource_id,
         )
 
     return name_to_index, next_resource_id, material_resource_id, basematerials_element
@@ -344,7 +380,7 @@ def write_prusa_filament_colors(archive, vertex_colors: Dict[str, int]) -> None:
             tree = xml.etree.ElementTree.ElementTree(root)
             with archive.open("Metadata/blender_filament_colors.xml", "w") as f:
                 tree.write(f, xml_declaration=True, encoding="UTF-8")
-            
+
             debug(f"Wrote {len(sorted_colors)} filament color mappings to metadata (fallback only)")
     except Exception as e:
         warn(f"Failed to write filament colors: {e}")

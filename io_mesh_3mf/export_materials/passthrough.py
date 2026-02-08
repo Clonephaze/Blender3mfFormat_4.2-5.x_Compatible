@@ -35,8 +35,9 @@ from ..constants import MATERIAL_NAMESPACE
 from ..utilities import debug, warn
 
 
-def write_passthrough_materials(resources_element: xml.etree.ElementTree.Element,
-                                next_resource_id: int) -> Tuple[int, bool]:
+def write_passthrough_materials(
+    resources_element: xml.etree.ElementTree.Element, next_resource_id: int
+) -> Tuple[int, bool]:
     """
     Write stored passthrough material data from scene custom properties.
 
@@ -62,8 +63,15 @@ def write_passthrough_materials(resources_element: xml.etree.ElementTree.Element
     has_textures = bool(scene.get("3mf_textures"))
     has_tex_groups = bool(scene.get("3mf_texture_groups"))
 
-    if (has_composites or has_multiprops or has_pbr_tex or has_colorgroups
-            or has_pbr_display or has_textures or has_tex_groups):
+    if (
+        has_composites
+        or has_multiprops
+        or has_pbr_tex
+        or has_colorgroups
+        or has_pbr_display
+        or has_textures
+        or has_tex_groups
+    ):
         any_written = True
     else:
         return next_resource_id, False
@@ -172,9 +180,11 @@ def write_passthrough_materials(resources_element: xml.etree.ElementTree.Element
     return next_resource_id, any_written
 
 
-def _write_passthrough_composites(resources_element: xml.etree.ElementTree.Element,
-                                  scene: bpy.types.Scene,
-                                  id_remap: Dict[str, str]) -> None:
+def _write_passthrough_composites(
+    resources_element: xml.etree.ElementTree.Element,
+    scene: bpy.types.Scene,
+    id_remap: Dict[str, str],
+) -> None:
     """
     Write stored compositematerials to XML.
 
@@ -221,9 +231,11 @@ def _write_passthrough_composites(resources_element: xml.etree.ElementTree.Eleme
     debug(f"Wrote {len(composite_data)} passthrough compositematerials")
 
 
-def _write_passthrough_textures(resources_element: xml.etree.ElementTree.Element,
-                                scene: bpy.types.Scene,
-                                id_remap: Dict[str, str]) -> None:
+def _write_passthrough_textures(
+    resources_element: xml.etree.ElementTree.Element,
+    scene: bpy.types.Scene,
+    id_remap: Dict[str, str],
+) -> None:
     """
     Write stored texture2d elements to XML.
 
@@ -267,9 +279,11 @@ def _write_passthrough_textures(resources_element: xml.etree.ElementTree.Element
     debug(f"Wrote {len(texture_data)} passthrough textures")
 
 
-def _write_passthrough_texture_groups(resources_element: xml.etree.ElementTree.Element,
-                                      scene: bpy.types.Scene,
-                                      id_remap: Dict[str, str]) -> None:
+def _write_passthrough_texture_groups(
+    resources_element: xml.etree.ElementTree.Element,
+    scene: bpy.types.Scene,
+    id_remap: Dict[str, str],
+) -> None:
     """
     Write stored texture2dgroup elements to XML.
 
@@ -318,9 +332,11 @@ def _write_passthrough_texture_groups(resources_element: xml.etree.ElementTree.E
     debug(f"Wrote {len(texgroup_data)} passthrough texture groups")
 
 
-def _write_passthrough_colorgroups(resources_element: xml.etree.ElementTree.Element,
-                                   scene: bpy.types.Scene,
-                                   id_remap: Dict[str, str]) -> None:
+def _write_passthrough_colorgroups(
+    resources_element: xml.etree.ElementTree.Element,
+    scene: bpy.types.Scene,
+    id_remap: Dict[str, str],
+) -> None:
     """
     Write stored colorgroup elements to XML.
 
@@ -364,9 +380,11 @@ def _write_passthrough_colorgroups(resources_element: xml.etree.ElementTree.Elem
     debug(f"Wrote {len(colorgroup_data)} passthrough colorgroups")
 
 
-def _write_passthrough_pbr_display(resources_element: xml.etree.ElementTree.Element,
-                                   scene: bpy.types.Scene,
-                                   id_remap: Dict[str, str]) -> None:
+def _write_passthrough_pbr_display(
+    resources_element: xml.etree.ElementTree.Element,
+    scene: bpy.types.Scene,
+    id_remap: Dict[str, str],
+) -> None:
     """
     Write stored non-textured PBR display properties to XML.
 
@@ -421,9 +439,11 @@ def _write_passthrough_pbr_display(resources_element: xml.etree.ElementTree.Elem
     debug(f"Wrote {len(pbr_data)} passthrough PBR display properties")
 
 
-def _write_passthrough_multiproperties(resources_element: xml.etree.ElementTree.Element,
-                                       scene: bpy.types.Scene,
-                                       id_remap: Dict[str, str]) -> None:
+def _write_passthrough_multiproperties(
+    resources_element: xml.etree.ElementTree.Element,
+    scene: bpy.types.Scene,
+    id_remap: Dict[str, str],
+) -> None:
     """
     Write stored multiproperties to XML.
 
@@ -473,9 +493,11 @@ def _write_passthrough_multiproperties(resources_element: xml.etree.ElementTree.
     debug(f"Wrote {len(multi_data)} passthrough multiproperties")
 
 
-def _write_passthrough_pbr_textures(resources_element: xml.etree.ElementTree.Element,
-                                    scene: bpy.types.Scene,
-                                    id_remap: Dict[str, str]) -> None:
+def _write_passthrough_pbr_textures(
+    resources_element: xml.etree.ElementTree.Element,
+    scene: bpy.types.Scene,
+    id_remap: Dict[str, str],
+) -> None:
     """
     Write stored textured PBR display properties to XML.
 

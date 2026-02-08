@@ -59,12 +59,18 @@ SPEC_VERSION: str = "1.4.0"
 
 # Set of namespaces for 3MF extensions that we support.
 # Materials extension is used for Orca Slicer color export.
-MATERIAL_NAMESPACE: str = "http://schemas.microsoft.com/3dmanufacturing/material/2015/02"
+MATERIAL_NAMESPACE: str = (
+    "http://schemas.microsoft.com/3dmanufacturing/material/2015/02"
+)
 # Production extension for multi-file structure (used by Orca/BambuStudio)
-PRODUCTION_NAMESPACE: str = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
+PRODUCTION_NAMESPACE: str = (
+    "http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
+)
 # Triangle Sets extension (introduced in Core Spec v1.3.0)
 # Used for grouping triangles for selection workflows and property assignment.
-TRIANGLE_SETS_NAMESPACE: str = "http://schemas.microsoft.com/3dmanufacturing/trianglesets/2021/07"
+TRIANGLE_SETS_NAMESPACE: str = (
+    "http://schemas.microsoft.com/3dmanufacturing/trianglesets/2021/07"
+)
 # BambuStudio/Orca vendor namespace
 BAMBU_NAMESPACE: str = "http://schemas.bambulab.com/package/2021"
 
@@ -80,26 +86,34 @@ conflicting_mustpreserve_contents: str = "<Conflicting MustPreserve file!>"
 
 # Default storage locations.
 MODEL_LOCATION: str = "3D/3dmodel.model"  # Conventional location for the 3D model data.
-CONTENT_TYPES_LOCATION: str = "[Content_Types].xml"  # Location of the content types definition.
+CONTENT_TYPES_LOCATION: str = (
+    "[Content_Types].xml"  # Location of the content types definition.
+)
 CORE_PROPERTIES_LOCATION: str = "docProps/core.xml"  # OPC Core Properties location.
 RELS_FOLDER: str = "_rels"  # Folder name to store relationships files in.
 
 # Relationship types.
 MODEL_REL: str = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"  # Relationship type of 3D models.
-THUMBNAIL_REL: str = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"
+THUMBNAIL_REL: str = (
+    "http://schemas.openxmlformats.org/package/2006/relationships/metadata/thumbnail"
+)
 CORE_PROPERTIES_REL: str = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties"
 TEXTURE_REL: str = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dtexture"  # 3D texture relationship type
 
 # MIME types of files in the archive.
 RELS_MIMETYPE: str = "application/vnd.openxmlformats-package.relationships+xml"  # MIME type of .rels files.
 MODEL_MIMETYPE: str = "application/vnd.ms-package.3dmanufacturing-3dmodel+xml"  # MIME type of .model files.
-CORE_PROPERTIES_MIMETYPE: str = "application/vnd.openxmlformats-package.core-properties+xml"
+CORE_PROPERTIES_MIMETYPE: str = (
+    "application/vnd.openxmlformats-package.core-properties+xml"
+)
 TEXTURE_MIMETYPE_PNG: str = "image/png"  # MIME type for PNG textures
 TEXTURE_MIMETYPE_JPEG: str = "image/jpeg"  # MIME type for JPEG textures
 
 # Constants in the 3D model file.
 MODEL_NAMESPACE: str = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
-SLIC3RPE_NAMESPACE: str = "http://schemas.slic3r.org/3mf/2017/06"  # PrusaSlicer/Slic3r vendor extension
+SLIC3RPE_NAMESPACE: str = (
+    "http://schemas.slic3r.org/3mf/2017/06"  # PrusaSlicer/Slic3r vendor extension
+)
 MODEL_NAMESPACES: Dict[str, str] = {
     "3mf": MODEL_NAMESPACE,
     "slic3rpe": SLIC3RPE_NAMESPACE,
@@ -109,13 +123,15 @@ MODEL_NAMESPACES: Dict[str, str] = {
 MODEL_DEFAULT_UNIT: str = "millimeter"  # If the unit is missing, it will be this.
 
 # Constants in the ContentTypes file.
-CONTENT_TYPES_NAMESPACE: str = "http://schemas.openxmlformats.org/package/2006/content-types"
-CONTENT_TYPES_NAMESPACES: Dict[str, str] = {
-    "ct": CONTENT_TYPES_NAMESPACE
-}
+CONTENT_TYPES_NAMESPACE: str = (
+    "http://schemas.openxmlformats.org/package/2006/content-types"
+)
+CONTENT_TYPES_NAMESPACES: Dict[str, str] = {"ct": CONTENT_TYPES_NAMESPACE}
 
 # OPC Core Properties namespaces (Dublin Core).
-CORE_PROPERTIES_NAMESPACE: str = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+CORE_PROPERTIES_NAMESPACE: str = (
+    "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+)
 DC_NAMESPACE: str = "http://purl.org/dc/elements/1.1/"  # Dublin Core elements
 DCTERMS_NAMESPACE: str = "http://purl.org/dc/terms/"  # Dublin Core terms
 

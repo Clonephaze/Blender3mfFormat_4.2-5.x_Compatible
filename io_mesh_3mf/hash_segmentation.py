@@ -70,9 +70,7 @@ class SegmentationNode:
 
     state: TriangleState = TriangleState.DEFAULT
 
-    split_sides: int = (
-        0
-    )
+    split_sides: int = 0
     special_side: int = 0
 
     children: Optional[List[SegmentationNode]] = None
@@ -171,9 +169,7 @@ class SegmentationDecoder:
                 )
             return node
         except Exception as e:
-            warn(
-                f"Error decoding segmentation string (length {len(hex_string)}): {e}"
-            )
+            warn(f"Error decoding segmentation string (length {len(hex_string)}): {e}")
             return None
 
     def _decode_node(self) -> SegmentationNode:

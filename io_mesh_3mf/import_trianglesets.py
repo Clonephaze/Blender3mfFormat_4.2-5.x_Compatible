@@ -28,8 +28,9 @@ if TYPE_CHECKING:
     from .import_3mf import Import3MF
 
 
-def read_triangle_sets(op: 'Import3MF',
-                       object_node: xml.etree.ElementTree.Element) -> Dict[str, List[int]]:
+def read_triangle_sets(
+    op: "Import3MF", object_node: xml.etree.ElementTree.Element
+) -> Dict[str, List[int]]:
     """
     Reads triangle sets from an XML node of an object.
 
@@ -60,7 +61,7 @@ def read_triangle_sets(op: 'Import3MF',
             set_name = attrib.get("identifier")
         if not set_name:
             warn("Triangle set missing name attribute, skipping")
-            op.safe_report({'WARNING'}, "Triangle set missing name attribute")
+            op.safe_report({"WARNING"}, "Triangle set missing name attribute")
             continue
 
         # Cache set name to protect Unicode characters
@@ -102,6 +103,8 @@ def read_triangle_sets(op: 'Import3MF',
             # Remove duplicates per spec: "A consumer MUST ignore duplicate references"
             triangle_indices = list(dict.fromkeys(triangle_indices))
             triangle_sets[set_name] = triangle_indices
-            debug(f"Loaded triangle set '{set_name}' with {len(triangle_indices)} triangles")
+            debug(
+                f"Loaded triangle set '{set_name}' with {len(triangle_indices)} triangles"
+            )
 
     return triangle_sets

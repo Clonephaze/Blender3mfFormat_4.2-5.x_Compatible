@@ -60,14 +60,16 @@ DEFAULT_PALETTE = [
 #  PropertyGroups
 # ===================================================================
 
+
 class MMUFilamentItem(bpy.types.PropertyGroup):
     """One filament/extruder entry in the palette list."""
 
     color: bpy.props.FloatVectorProperty(
         name="Color",
-        subtype='COLOR_GAMMA',
+        subtype="COLOR_GAMMA",
         size=3,
-        min=0.0, max=1.0,
+        min=0.0,
+        max=1.0,
         default=(0.8, 0.8, 0.8),
         description="Filament swatch color (read-only display, sRGB)",
     )
@@ -83,9 +85,10 @@ class MMUInitFilamentItem(bpy.types.PropertyGroup):
 
     color: bpy.props.FloatVectorProperty(
         name="Color",
-        subtype='COLOR_GAMMA',
+        subtype="COLOR_GAMMA",
         size=3,
-        min=0.0, max=1.0,
+        min=0.0,
+        max=1.0,
         default=(0.8, 0.8, 0.8),
         description="Filament color for initialization (sRGB)",
     )
@@ -132,7 +135,7 @@ def _get_paint_image(obj):
     for mat in obj.data.materials:
         if mat and mat.use_nodes:
             for node in mat.node_tree.nodes:
-                if node.type == 'TEX_IMAGE' and node.image:
+                if node.type == "TEX_IMAGE" and node.image:
                     return node.image
     return None
 
@@ -140,7 +143,7 @@ def _get_paint_image(obj):
 def _get_paint_mesh(context):
     """Return the active mesh if it has MMU paint data, else None."""
     obj = context.active_object
-    if obj and obj.type == 'MESH' and obj.data.get("3mf_is_paint_texture"):
+    if obj and obj.type == "MESH" and obj.data.get("3mf_is_paint_texture"):
         return obj.data
     return None
 
@@ -212,7 +215,7 @@ def _configure_paint_brush(context):
     Returns the brush object or None.
     """
     ts = context.tool_settings
-    
+
     if bpy.app.version >= (5, 0, 0):
         # Blender 5.0+: Configure active brush (read-only assignment)
         brush = ts.image_paint.brush if ts.image_paint else None
@@ -223,57 +226,57 @@ def _configure_paint_brush(context):
         brush_name = "3MF Paint"
         brush = bpy.data.brushes.get(brush_name)
         if brush is None:
-            brush = bpy.data.brushes.new(name=brush_name, mode='TEXTURE_PAINT')
+            brush = bpy.data.brushes.new(name=brush_name, mode="TEXTURE_PAINT")
         # Try to assign (writable in 4.x)
         try:
             ts.image_paint.brush = brush
         except AttributeError:
             pass  # Fall back to active brush if assignment fails
-    
+
     # Configure brush settings (common to both versions)
     if brush:
-        brush.blend = 'MIX'
+        brush.blend = "MIX"
         brush.strength = 1.0
-        brush.curve_distance_falloff_preset = 'CONSTANT'
-    
+        brush.curve_distance_falloff_preset = "CONSTANT"
+
     return brush
 
 
 def _set_brush_color(context, color_rgb):
     """Set the active texture paint brush color to the given (r, g, b) sRGB tuple.
-    
+
     The palette stores colors as raw sRGB values (matching the hex colors in the
     3MF file).  Blender's brush.color expects **linear** values — it will convert
     linear → sRGB internally when writing to an sRGB-tagged image.  We therefore
     convert sRGB → linear here so that the painted pixels end up with the same
     raw sRGB values that the import renderer wrote via foreach_set.
-    
+
     CRITICAL: Blender has a "Unified Color" system where the paint color can be
     stored either in the brush OR in the unified paint settings (shared across all
     brushes).  We set BOTH to ensure the color updates correctly.
     """
     # Ensure we have a proper 3-element tuple
     color_rgb = tuple(color_rgb[:3])
-    
+
     # Convert sRGB → linear so Blender's paint system round-trips correctly.
     linear_rgb = (
         _srgb_to_linear(color_rgb[0]),
         _srgb_to_linear(color_rgb[1]),
         _srgb_to_linear(color_rgb[2]),
     )
-    
-    ts = context.tool_settings  
+
+    ts = context.tool_settings
     if not ts.image_paint:
         return
-    
+
     brush = ts.image_paint.brush
     if not brush:
         return
-    
+
     try:
         # 1. Set brush color (used when unified color is OFF)
         brush.color = linear_rgb
-        
+
         # 2. Set unified paint settings color (used when unified color is ON)
         # This is the key - most users have "Unified Color" enabled by default
         # ts.image_paint is the Paint settings object with unified_paint_settings
@@ -282,12 +285,12 @@ def _set_brush_color(context, color_rgb):
             # ALWAYS set the unified color - this is what actually controls the paint color
             # when "use_unified_color" is enabled (which is the default)
             ups.color = linear_rgb
-            
+
         # 3. Force UI refresh to show the new color
         for area in context.screen.areas:
-            if area.type == 'VIEW_3D':
+            if area.type == "VIEW_3D":
                 area.tag_redraw()
-                
+
     except Exception:
         pass
 
@@ -295,6 +298,7 @@ def _set_brush_color(context, color_rgb):
 # ===================================================================
 #  Property update callbacks
 # ===================================================================
+
 
 def _on_active_filament_changed(self, context):
     """When user selects a different filament in the list, update brush color."""
@@ -312,17 +316,22 @@ def _on_active_filament_changed(self, context):
 #  Operators
 # ===================================================================
 
+
 class MMU_OT_initialize(bpy.types.Operator):
     """Initialize MMU painting on the active mesh object"""
+
     bl_idname = "mmu.initialize_painting"
     bl_label = "Initialize MMU Painting"
-    bl_options = {'REGISTER', 'UNDO'}
+    bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        return (obj is not None and obj.type == 'MESH'
-                and not obj.data.get("3mf_is_paint_texture"))
+        return (
+            obj is not None
+            and obj.type == "MESH"
+            and not obj.data.get("3mf_is_paint_texture")
+        )
 
     def execute(self, context):
         obj = context.active_object
@@ -331,8 +340,8 @@ class MMU_OT_initialize(bpy.types.Operator):
 
         # Use init_filaments for colors
         if len(settings.init_filaments) < 2:
-            self.report({'ERROR'}, "At least 2 filaments required")
-            return {'CANCELLED'}
+            self.report({"ERROR"}, "At least 2 filaments required")
+            return {"CANCELLED"}
 
         # --- UV unwrap if needed ---
         if not mesh.uv_layers:
@@ -342,18 +351,18 @@ class MMU_OT_initialize(bpy.types.Operator):
         context.view_layer.objects.active = obj
 
         # Smart UV Project (same params as import pipeline)
-        bpy.ops.object.mode_set(mode='EDIT')
-        bpy.ops.mesh.select_all(action='SELECT')
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
         bpy.ops.uv.smart_project(
             angle_limit=1.15192,
-            margin_method='SCALED',
-            rotate_method='AXIS_ALIGNED',
+            margin_method="SCALED",
+            rotate_method="AXIS_ALIGNED",
             island_margin=0.002,
             area_weight=0.6,
             correct_aspect=True,
             scale_to_bounds=False,
         )
-        bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.ops.object.mode_set(mode="OBJECT")
 
         # --- Texture size by triangle count ---
         tri_count = len(mesh.polygons)
@@ -388,18 +397,18 @@ class MMU_OT_initialize(bpy.types.Operator):
         links = mat.node_tree.links
         nodes.clear()
 
-        tex_node = nodes.new('ShaderNodeTexImage')
+        tex_node = nodes.new("ShaderNodeTexImage")
         tex_node.image = image
         tex_node.location = (-300, 0)
 
-        bsdf = nodes.new('ShaderNodeBsdfPrincipled')
+        bsdf = nodes.new("ShaderNodeBsdfPrincipled")
         bsdf.location = (100, 0)
 
-        output = nodes.new('ShaderNodeOutputMaterial')
+        output = nodes.new("ShaderNodeOutputMaterial")
         output.location = (400, 0)
 
-        links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
-        links.new(bsdf.outputs['BSDF'], output.inputs['Surface'])
+        links.new(tex_node.outputs["Color"], bsdf.inputs["Base Color"])
+        links.new(bsdf.outputs["BSDF"], output.inputs["Surface"])
 
         # Clear existing materials, assign ours
         mesh.materials.clear()
@@ -426,19 +435,19 @@ class MMU_OT_initialize(bpy.types.Operator):
         # Set active node so texture paint knows which image to paint on
         if mat.node_tree:
             for node in mat.node_tree.nodes:
-                if node.type == 'TEX_IMAGE':
+                if node.type == "TEX_IMAGE":
                     mat.node_tree.nodes.active = node
                     break
 
         # Switch to Texture Paint mode FIRST — ts.image_paint / brush
         # are not reliably available until we're in paint mode.
-        bpy.ops.object.mode_set(mode='TEXTURE_PAINT')
+        bpy.ops.object.mode_set(mode="TEXTURE_PAINT")
 
         # --- Setup brush and canvas (must be in TEXTURE_PAINT mode) ---
         _configure_paint_brush(context)
 
         ts = context.tool_settings
-        if hasattr(ts.image_paint, 'canvas'):
+        if hasattr(ts.image_paint, "canvas"):
             ts.image_paint.canvas = image
 
         if len(settings.filaments) > 0:
@@ -446,91 +455,98 @@ class MMU_OT_initialize(bpy.types.Operator):
             _set_brush_color(context, settings.filaments[0].color[:])
 
         count = len(settings.init_filaments)
-        self.report({'INFO'}, f"Initialized MMU painting with {count} filaments at {texture_size}x{texture_size}")
-        return {'FINISHED'}
+        self.report(
+            {"INFO"},
+            f"Initialized MMU painting with {count} filaments at {texture_size}x{texture_size}",
+        )
+        return {"FINISHED"}
 
 
 class MMU_OT_add_init_filament(bpy.types.Operator):
     """Add a filament to the initialization list"""
+
     bl_idname = "mmu.add_init_filament"
     bl_label = "Add Filament"
-    bl_options = {'INTERNAL'}
+    bl_options = {"INTERNAL"}
 
     def execute(self, context):
         settings = context.scene.mmu_paint
-        
+
         if len(settings.init_filaments) >= 16:
-            self.report({'ERROR'}, "Maximum 16 filaments supported")
-            return {'CANCELLED'}
-        
+            self.report({"ERROR"}, "Maximum 16 filaments supported")
+            return {"CANCELLED"}
+
         idx = len(settings.init_filaments)
         item = settings.init_filaments.add()
         item.name = f"Filament {idx + 1}"
-        
+
         # Pick color from palette
         if idx < len(DEFAULT_PALETTE):
             item.color = DEFAULT_PALETTE[idx]
         else:
             item.color = DEFAULT_PALETTE[idx % len(DEFAULT_PALETTE)]
-        
-        return {'FINISHED'}
+
+        return {"FINISHED"}
 
 
 class MMU_OT_remove_init_filament(bpy.types.Operator):
     """Remove the selected filament from the initialization list"""
+
     bl_idname = "mmu.remove_init_filament"
     bl_label = "Remove Filament"
-    bl_options = {'INTERNAL'}
+    bl_options = {"INTERNAL"}
 
     def execute(self, context):
         settings = context.scene.mmu_paint
-        
+
         if len(settings.init_filaments) <= 2:
-            self.report({'ERROR'}, "Minimum 2 filaments required")
-            return {'CANCELLED'}
-        
+            self.report({"ERROR"}, "Minimum 2 filaments required")
+            return {"CANCELLED"}
+
         idx = settings.active_init_filament_index
         if idx < 0 or idx >= len(settings.init_filaments):
-            return {'CANCELLED'}
-        
+            return {"CANCELLED"}
+
         settings.init_filaments.remove(idx)
-        
+
         # Rename remaining filaments
         for i, item in enumerate(settings.init_filaments):
             item.name = f"Filament {i + 1}"
-        
+
         # Clamp selection
         if settings.active_init_filament_index >= len(settings.init_filaments):
             settings.active_init_filament_index = len(settings.init_filaments) - 1
-        
-        return {'FINISHED'}
+
+        return {"FINISHED"}
 
 
 class MMU_OT_reset_init_filaments(bpy.types.Operator):
     """Reset initialization filaments to default 4-color palette"""
+
     bl_idname = "mmu.reset_init_filaments"
     bl_label = "Reset to Defaults"
-    bl_options = {'INTERNAL'}
+    bl_options = {"INTERNAL"}
 
     def execute(self, context):
         settings = context.scene.mmu_paint
         settings.init_filaments.clear()
-        
+
         # Create default 4 filaments
         for i in range(4):
             item = settings.init_filaments.add()
             item.name = f"Filament {i + 1}"
             item.color = DEFAULT_PALETTE[i]
-        
+
         settings.active_init_filament_index = 0
-        return {'FINISHED'}
+        return {"FINISHED"}
 
 
 class MMU_OT_select_filament(bpy.types.Operator):
     """Select a filament and set it as the active brush color"""
+
     bl_idname = "mmu.select_filament"
     bl_label = "Select Filament"
-    bl_options = {'INTERNAL'}
+    bl_options = {"INTERNAL"}
 
     index: bpy.props.IntProperty()
 
@@ -539,14 +555,15 @@ class MMU_OT_select_filament(bpy.types.Operator):
         if 0 <= self.index < len(settings.filaments):
             settings.active_filament_index = self.index
             _set_brush_color(context, settings.filaments[self.index].color[:])
-        return {'FINISHED'}
+        return {"FINISHED"}
 
 
 class MMU_OT_add_filament(bpy.types.Operator):
     """Add a new filament to the palette"""
+
     bl_idname = "mmu.add_filament"
     bl_label = "Add Filament"
-    bl_options = {'REGISTER', 'UNDO'}
+    bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
     def poll(cls, context):
@@ -561,8 +578,8 @@ class MMU_OT_add_filament(bpy.types.Operator):
         count = len(settings.filaments)
 
         if count >= 16:
-            self.report({'ERROR'}, "Maximum 16 filaments supported")
-            return {'CANCELLED'}
+            self.report({"ERROR"}, "Maximum 16 filaments supported")
+            return {"CANCELLED"}
 
         # Pick a default color from the palette
         new_index = count
@@ -578,17 +595,20 @@ class MMU_OT_add_filament(bpy.types.Operator):
 
         _write_colors_to_mesh(context)
 
-        self.report({'WARNING'},
-                    f"Added filament {new_index + 1}. "
-                    f"Ensure your printer profile supports {count + 1} filaments.")
-        return {'FINISHED'}
+        self.report(
+            {"WARNING"},
+            f"Added filament {new_index + 1}. "
+            f"Ensure your printer profile supports {count + 1} filaments.",
+        )
+        return {"FINISHED"}
 
 
 class MMU_OT_remove_filament(bpy.types.Operator):
     """Remove the selected filament from the palette"""
+
     bl_idname = "mmu.remove_filament"
     bl_label = "Remove Filament"
-    bl_options = {'REGISTER', 'UNDO'}
+    bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
     def poll(cls, context):
@@ -602,11 +622,11 @@ class MMU_OT_remove_filament(bpy.types.Operator):
         settings = context.scene.mmu_paint
         idx = settings.active_filament_index
         if idx < 0 or idx >= len(settings.filaments):
-            return {'CANCELLED'}
+            return {"CANCELLED"}
 
         if len(settings.filaments) <= 2:
-            self.report({'ERROR'}, "Minimum 2 filaments required")
-            return {'CANCELLED'}
+            self.report({"ERROR"}, "Minimum 2 filaments required")
+            return {"CANCELLED"}
 
         removed = settings.filaments[idx]
         removed_color = tuple(removed.color[:])
@@ -623,7 +643,7 @@ class MMU_OT_remove_filament(bpy.types.Operator):
         obj = context.active_object
         image = _get_paint_image(obj)
         replaced_count = 0
-        
+
         if image is not None:
             w, h = image.size
             pixels_flat = np.empty(w * h * 4, dtype=np.float32)
@@ -632,7 +652,7 @@ class MMU_OT_remove_filament(bpy.types.Operator):
 
             old_arr = np.array(removed_color, dtype=np.float32)
             new_arr = np.array(new_base_color, dtype=np.float32)
-            
+
             tolerance = 3.0 / 255.0
             mask = np.all(np.abs(pixels[:, :, :3] - old_arr) < tolerance, axis=2)
             replaced_count = int(np.count_nonzero(mask))
@@ -658,46 +678,50 @@ class MMU_OT_remove_filament(bpy.types.Operator):
         _write_colors_to_mesh(context)
 
         if replaced_count > 0:
-            self.report({'INFO'}, f"Removed filament and replaced {replaced_count} pixels")
+            self.report(
+                {"INFO"}, f"Removed filament and replaced {replaced_count} pixels"
+            )
         else:
-            self.report({'INFO'}, "Removed filament")
+            self.report({"INFO"}, "Removed filament")
 
         msg = f"Removed filament. {len(settings.filaments)} remaining."
         if replaced_count > 0:
             msg += f" Replaced {replaced_count} painted pixels with base color."
-        self.report({'INFO'}, msg)
-        return {'FINISHED'}
+        self.report({"INFO"}, msg)
+        return {"FINISHED"}
 
 
 class MMU_OT_fix_falloff(bpy.types.Operator):
     """Set brush falloff to Constant to prevent banding on export"""
+
     bl_idname = "mmu.fix_falloff"
     bl_label = "Fix Brush Falloff"
-    bl_options = {'INTERNAL'}
+    bl_options = {"INTERNAL"}
 
     def execute(self, context):
         brush = context.tool_settings.image_paint.brush
         if brush:
-            brush.curve_distance_falloff_preset = 'CONSTANT'
-            self.report({'INFO'}, "Brush falloff set to Constant")
-        return {'FINISHED'}
+            brush.curve_distance_falloff_preset = "CONSTANT"
+            self.report({"INFO"}, "Brush falloff set to Constant")
+        return {"FINISHED"}
 
 
 class MMU_OT_switch_to_paint(bpy.types.Operator):
     """Switch to Texture Paint mode and open the MMU Paint panel"""
+
     bl_idname = "mmu.switch_to_paint"
     bl_label = "Open MMU Paint Mode"
     bl_description = "Switch to Texture Paint mode to paint multi-material regions"
-    bl_options = {'INTERNAL'}
+    bl_options = {"INTERNAL"}
 
     def execute(self, context):
         obj = context.active_object
-        if obj is None or obj.type != 'MESH':
-            self.report({'WARNING'}, "Select a mesh object first")
-            return {'CANCELLED'}
+        if obj is None or obj.type != "MESH":
+            self.report({"WARNING"}, "Select a mesh object first")
+            return {"CANCELLED"}
 
         # Switch to texture paint
-        bpy.ops.object.mode_set(mode='TEXTURE_PAINT')
+        bpy.ops.object.mode_set(mode="TEXTURE_PAINT")
 
         # Setup brush
         _configure_paint_brush(context)
@@ -705,7 +729,7 @@ class MMU_OT_switch_to_paint(bpy.types.Operator):
 
         # Select the paint image
         image = _get_paint_image(obj)
-        if image and hasattr(ts.image_paint, 'canvas'):
+        if image and hasattr(ts.image_paint, "canvas"):
             ts.image_paint.canvas = image
 
         # Set active node
@@ -713,7 +737,7 @@ class MMU_OT_switch_to_paint(bpy.types.Operator):
             mat = obj.data.materials[0]
             if mat and mat.use_nodes:
                 for node in mat.node_tree.nodes:
-                    if node.type == 'TEX_IMAGE':
+                    if node.type == "TEX_IMAGE":
                         mat.node_tree.nodes.active = node
                         break
 
@@ -727,26 +751,28 @@ class MMU_OT_switch_to_paint(bpy.types.Operator):
 
         # Try to open the sidebar panel
         for area in context.screen.areas:
-            if area.type == 'VIEW_3D':
+            if area.type == "VIEW_3D":
                 for space in area.spaces:
-                    if space.type == 'VIEW_3D':
+                    if space.type == "VIEW_3D":
                         space.show_region_ui = True
                 break
 
-        return {'FINISHED'}
+        return {"FINISHED"}
 
 
 class MMU_OT_reassign_filament_color(bpy.types.Operator):
     """Reassign a filament color — replaces all pixels of old color with new color"""
+
     bl_idname = "mmu.reassign_filament_color"
     bl_label = "Reassign Filament Color"
-    bl_options = {'REGISTER', 'UNDO'}
+    bl_options = {"REGISTER", "UNDO"}
 
     new_color: bpy.props.FloatVectorProperty(
         name="New Color",
-        subtype='COLOR_GAMMA',
+        subtype="COLOR_GAMMA",
         size=3,
-        min=0.0, max=1.0,
+        min=0.0,
+        max=1.0,
         default=(1.0, 1.0, 1.0),
         description="New color to replace the current filament color",
     )
@@ -757,8 +783,9 @@ class MMU_OT_reassign_filament_color(bpy.types.Operator):
         if mesh is None:
             return False
         settings = context.scene.mmu_paint
-        return (len(settings.filaments) > 0
-                and settings.active_filament_index < len(settings.filaments))
+        return len(settings.filaments) > 0 and settings.active_filament_index < len(
+            settings.filaments
+        )
 
     def invoke(self, context, event):
         settings = context.scene.mmu_paint
@@ -773,11 +800,13 @@ class MMU_OT_reassign_filament_color(bpy.types.Operator):
         layout = self.layout
         settings = context.scene.mmu_paint
         idx = settings.active_filament_index
-        
+
         if idx < len(settings.filaments):
             item = settings.filaments[idx]
             layout.label(text=f"Reassigning {item.name}")
-            layout.label(text="This will replace all pixels of the current color", icon='INFO')
+            layout.label(
+                text="This will replace all pixels of the current color", icon="INFO"
+            )
             layout.label(text="with the new color you choose.")
             layout.separator()
             layout.prop(self, "new_color", text="New Color")
@@ -785,23 +814,23 @@ class MMU_OT_reassign_filament_color(bpy.types.Operator):
     def execute(self, context):
         settings = context.scene.mmu_paint
         idx = settings.active_filament_index
-        
+
         if idx >= len(settings.filaments):
-            return {'CANCELLED'}
-        
+            return {"CANCELLED"}
+
         item = settings.filaments[idx]
         obj = context.active_object
         image = _get_paint_image(obj)
         if image is None:
-            self.report({'WARNING'}, "No paint texture found")
-            return {'CANCELLED'}
+            self.report({"WARNING"}, "No paint texture found")
+            return {"CANCELLED"}
 
         old_rgb = tuple(item.color[:])
         new_rgb = tuple(self.new_color[:])
 
         # Skip if colors are identical
         if all(abs(o - n) < 0.002 for o, n in zip(old_rgb, new_rgb)):
-            return {'CANCELLED'}
+            return {"CANCELLED"}
 
         # Bulk pixel replacement
         w, h = image.size
@@ -815,12 +844,12 @@ class MMU_OT_reassign_filament_color(bpy.types.Operator):
 
         tolerance = 3.0 / 255.0
         mask = np.all(np.abs(pixels[:, :, :3] - old_arr) < tolerance, axis=2)
-        
+
         num_changed = np.count_nonzero(mask)
         if num_changed == 0:
-            self.report({'INFO'}, "No pixels found with the current color")
-            return {'CANCELLED'}
-        
+            self.report({"INFO"}, "No pixels found with the current color")
+            return {"CANCELLED"}
+
         pixels[mask, 0] = new_arr[0]
         pixels[mask, 1] = new_arr[1]
         pixels[mask, 2] = new_arr[2]
@@ -835,15 +864,16 @@ class MMU_OT_reassign_filament_color(bpy.types.Operator):
         # Update brush if this is the active filament
         _set_brush_color(context, new_rgb)
 
-        self.report({'INFO'}, f"Reassigned {num_changed} pixels to new color")
-        return {'FINISHED'}
+        self.report({"INFO"}, f"Reassigned {num_changed} pixels to new color")
+        return {"FINISHED"}
 
 
 class MMU_OT_import_paint_popup(bpy.types.Operator):
     """Post-import popup asking to switch to Texture Paint mode"""
+
     bl_idname = "mmu.import_paint_popup"
     bl_label = "MMU Paint Data Detected"
-    bl_options = {'INTERNAL', 'UNDO'}
+    bl_options = {"INTERNAL", "UNDO"}
 
     object_name: bpy.props.StringProperty()
 
@@ -852,12 +882,12 @@ class MMU_OT_import_paint_popup(bpy.types.Operator):
         # Select the imported object
         obj = bpy.data.objects.get(self.object_name)
         if obj:
-            bpy.ops.object.select_all(action='DESELECT')
+            bpy.ops.object.select_all(action="DESELECT")
             obj.select_set(True)
             context.view_layer.objects.active = obj
 
         bpy.ops.mmu.switch_to_paint()
-        return {'FINISHED'}
+        return {"FINISHED"}
 
     def cancel(self, context):
         """User dismissed the popup — stay in Object mode."""
@@ -874,7 +904,7 @@ class MMU_OT_import_paint_popup(bpy.types.Operator):
         layout.label(text="to view and edit the paint regions?")
         layout.separator()
         box = layout.box()
-        box.label(text="After switching, open the sidebar (N key) and", icon='INFO')
+        box.label(text="After switching, open the sidebar (N key) and", icon="INFO")
         box.label(text="click the '3MF' tab to access the paint tools.")
 
 
@@ -882,11 +912,14 @@ class MMU_OT_import_paint_popup(bpy.types.Operator):
 #  UIList
 # ===================================================================
 
+
 class MMU_UL_init_filaments(bpy.types.UIList):
     """Two-column initialization filament list: color picker + name."""
 
-    def draw_item(self, context, layout, data, item, icon, active_data, active_property, index):
-        if self.layout_type in {'DEFAULT', 'COMPACT'}:
+    def draw_item(
+        self, context, layout, data, item, icon, active_data, active_property, index
+    ):
+        if self.layout_type in {"DEFAULT", "COMPACT"}:
             row = layout.row(align=True)
             # Editable color swatch column
             swatch = row.row()
@@ -894,16 +927,18 @@ class MMU_UL_init_filaments(bpy.types.UIList):
             swatch.prop(item, "color", text="")
             # Wider name column
             row.label(text=item.name)
-        elif self.layout_type == 'GRID':
-            layout.alignment = 'CENTER'
+        elif self.layout_type == "GRID":
+            layout.alignment = "CENTER"
             layout.prop(item, "color", text="")
 
 
 class MMU_UL_filaments(bpy.types.UIList):
     """Two-column filament list: color swatch + name label."""
 
-    def draw_item(self, context, layout, data, item, icon, active_data, active_property, index):
-        if self.layout_type in {'DEFAULT', 'COMPACT'}:
+    def draw_item(
+        self, context, layout, data, item, icon, active_data, active_property, index
+    ):
+        if self.layout_type in {"DEFAULT", "COMPACT"}:
             row = layout.row(align=True)
             # Skinny color swatch column (read-only display)
             swatch = row.row()
@@ -912,8 +947,8 @@ class MMU_UL_filaments(bpy.types.UIList):
             swatch.prop(item, "color", text="")
             # Wider name column
             row.label(text=item.name)
-        elif self.layout_type == 'GRID':
-            layout.alignment = 'CENTER'
+        elif self.layout_type == "GRID":
+            layout.alignment = "CENTER"
             layout.prop(item, "color", text="")
 
 
@@ -921,19 +956,21 @@ class MMU_UL_filaments(bpy.types.UIList):
 #  Panel
 # ===================================================================
 
+
 class VIEW3D_PT_mmu_paint(bpy.types.Panel):
     """MMU Paint Suite — multi-filament texture painting for 3MF export."""
 
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = '3MF'
-    bl_label = 'MMU Paint'
-    bl_context = 'imagepaint'
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "3MF"
+    bl_label = "MMU Paint"
+    bl_context = "imagepaint"
 
     @classmethod
     def poll(cls, context):
-        return (context.active_object is not None
-                and context.active_object.type == 'MESH')
+        return (
+            context.active_object is not None and context.active_object.type == "MESH"
+        )
 
     def draw(self, context):
         layout = self.layout
@@ -945,31 +982,38 @@ class VIEW3D_PT_mmu_paint(bpy.types.Panel):
             #  STATE A: Uninitialized
             # ============================
             box = layout.box()
-            box.label(text="Setup MMU Painting", icon='BRUSH_DATA')
+            box.label(text="Setup MMU Painting", icon="BRUSH_DATA")
 
             # Initialize list if empty
             if len(settings.init_filaments) == 0:
-                box.operator("mmu.reset_init_filaments", text="Create Default Palette", icon='ADD')
+                box.operator(
+                    "mmu.reset_init_filaments",
+                    text="Create Default Palette",
+                    icon="ADD",
+                )
             else:
                 # Show filament list
                 row = box.row()
                 row.template_list(
-                    "MMU_UL_init_filaments", "",
-                    settings, "init_filaments",
-                    settings, "active_init_filament_index",
+                    "MMU_UL_init_filaments",
+                    "",
+                    settings,
+                    "init_filaments",
+                    settings,
+                    "active_init_filament_index",
                     rows=3,
                     maxrows=8,
                 )
 
                 # Add/Remove buttons
                 col = row.column(align=True)
-                col.operator("mmu.add_init_filament", icon='ADD', text="")
-                col.operator("mmu.remove_init_filament", icon='REMOVE', text="")
+                col.operator("mmu.add_init_filament", icon="ADD", text="")
+                col.operator("mmu.remove_init_filament", icon="REMOVE", text="")
 
                 # Reset and Initialize buttons
                 row = box.row(align=True)
-                row.operator("mmu.reset_init_filaments", icon='FILE_REFRESH')
-                row.operator("mmu.initialize_painting", icon='PLAY', text="Initialize")
+                row.operator("mmu.reset_init_filaments", icon="FILE_REFRESH")
+                row.operator("mmu.initialize_painting", icon="PLAY", text="Initialize")
 
         else:
             # ============================
@@ -978,31 +1022,34 @@ class VIEW3D_PT_mmu_paint(bpy.types.Panel):
 
             # --- Filament list ---
             box = layout.box()
-            box.label(text="Filament Palette", icon='COLOR')
+            box.label(text="Filament Palette", icon="COLOR")
 
             row = box.row()
             row.template_list(
-                "MMU_UL_filaments", "",
-                settings, "filaments",
-                settings, "active_filament_index",
+                "MMU_UL_filaments",
+                "",
+                settings,
+                "filaments",
+                settings,
+                "active_filament_index",
                 rows=3,
                 maxrows=6,
             )
 
             # Add/Remove buttons
             col = row.column(align=True)
-            col.operator("mmu.add_filament", icon='ADD', text="")
-            col.operator("mmu.remove_filament", icon='REMOVE', text="")
+            col.operator("mmu.add_filament", icon="ADD", text="")
+            col.operator("mmu.remove_filament", icon="REMOVE", text="")
 
             # Reassign color button below list
-            box.operator("mmu.reassign_filament_color", icon='COLORSET_01_VEC')
+            box.operator("mmu.reassign_filament_color", icon="COLORSET_01_VEC")
 
             # --- Brush falloff warning ---
             brush = context.tool_settings.image_paint.brush
             if brush:
                 is_constant = False
                 try:
-                    is_constant = (brush.curve_distance_falloff_preset == 'CONSTANT')
+                    is_constant = brush.curve_distance_falloff_preset == "CONSTANT"
                 except AttributeError:
                     pass
 
@@ -1010,11 +1057,9 @@ class VIEW3D_PT_mmu_paint(bpy.types.Panel):
                     warn_box = layout.box()
                     warn_row = warn_box.row(align=True)
                     warn_row.alert = True
-                    warn_row.label(text="Soft edges will cause banding", icon='ERROR')
+                    warn_row.label(text="Soft edges will cause banding", icon="ERROR")
                     warn_row.label(text="issues on export")
-                    warn_box.operator("mmu.fix_falloff", icon='CHECKMARK')
-
-
+                    warn_box.operator("mmu.fix_falloff", icon="CHECKMARK")
 
 
 # ===================================================================
@@ -1035,7 +1080,7 @@ def _on_depsgraph_update(scene, depsgraph=None):
 
         if current_name != _last_active_object_name:
             _last_active_object_name = current_name
-            if obj and obj.type == 'MESH':
+            if obj and obj.type == "MESH":
                 settings = scene.mmu_paint
                 settings.loaded_mesh_name = ""  # Force resync
                 _sync_filaments_from_mesh(ctx)

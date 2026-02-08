@@ -142,7 +142,9 @@ class Annotations:
                 Relationship(namespace=namespace, source=base_path)
             )
 
-    def add_content_types(self, files_by_content_type: Dict[str, Set[IO[bytes]]]) -> None:
+    def add_content_types(
+        self, files_by_content_type: Dict[str, Set[IO[bytes]]]
+    ) -> None:
         """
         Add annotations that signal the content types of the files in the archive.
 
@@ -177,9 +179,7 @@ class Annotations:
                 ):
                     # There was already a content type and it is different from this one.
                     # This file now has conflicting content types!
-                    warn(
-                        f"Found conflicting content types for file: {filename}"
-                    )
+                    warn(f"Found conflicting content types for file: {filename}")
                     for annotation in content_type_annotations:
                         self.annotations[filename].remove(annotation)
                     self.annotations[filename].add(ConflictingContentType)
@@ -269,7 +269,9 @@ class Annotations:
             document = xml.etree.ElementTree.ElementTree(root)
 
             # Write that XML document to a file.
-            rels_file = f"{source}{RELS_FOLDER}/.rels"  # _rels folder in the "source" folder.
+            rels_file = (
+                f"{source}{RELS_FOLDER}/.rels"  # _rels folder in the "source" folder.
+            )
             with archive.open(rels_file, "w") as f:
                 document.write(
                     f,
@@ -305,7 +307,9 @@ class Annotations:
         most_common[".rels"] = RELS_MIMETYPE
         most_common[".model"] = MODEL_MIMETYPE
         most_common[".config"] = "application/xml"  # For Orca Slicer metadata files
-        most_common[".xml"] = CORE_PROPERTIES_MIMETYPE  # For Core Properties (docProps/core.xml)
+        most_common[".xml"] = (
+            CORE_PROPERTIES_MIMETYPE  # For Core Properties (docProps/core.xml)
+        )
         most_common[".png"] = "image/png"  # For thumbnail
 
         # Write an XML file that contains the extension rules for the most common cases,
@@ -434,14 +438,10 @@ class Annotations:
                         )
                         continue
             except TypeError:  # Raised when `annotations` is not iterable.
-                warn(
-                    f'Annotation for target "{target}" is not properly structured.'
-                )
+                warn(f'Annotation for target "{target}" is not properly structured.')
             except KeyError as e:
                 # Raised when missing the 'annotation' key or a required key belonging to that annotation.
-                warn(
-                    f'Annotation for target "{target}" missing key: {str(e)}'
-                )
+                warn(f'Annotation for target "{target}" missing key: {str(e)}')
             if not self.annotations[target]:  # Nothing was added in the end.
                 del self.annotations[
                     target

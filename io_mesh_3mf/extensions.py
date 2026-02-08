@@ -23,8 +23,9 @@ from enum import Enum
 
 class ExtensionType(Enum):
     """Type of 3MF extension."""
+
     OFFICIAL = "official"  # Official 3MF Consortium extension
-    VENDOR = "vendor"      # Vendor-specific extension
+    VENDOR = "vendor"  # Vendor-specific extension
 
 
 @dataclass
@@ -41,6 +42,7 @@ class Extension:
         required: Whether this extension must be declared in requiredextensions
         vendor_attribute: Optional vendor-specific attribute name (e.g., "BambuStudio:3mfVersion")
     """
+
     namespace: str
     prefix: str
     name: str
@@ -185,9 +187,7 @@ class ExtensionManager:
             or empty string if no required extensions are active.
         """
         required = [
-            ext.namespace
-            for ext in self.get_active_extensions()
-            if ext.required
+            ext.namespace for ext in self.get_active_extensions() if ext.required
         ]
         return " ".join(required)
 
@@ -218,6 +218,7 @@ class ExtensionManager:
 
 # Convenience functions for common extension operations
 
+
 def get_extension_by_namespace(namespace: str) -> Optional[Extension]:
     """Get Extension object by namespace URI."""
     return EXTENSION_REGISTRY.get(namespace)
@@ -233,14 +234,20 @@ def get_extension_by_prefix(prefix: str) -> Optional[Extension]:
 
 def list_official_extensions() -> List[Extension]:
     """Get all registered official 3MF Consortium extensions."""
-    return [ext for ext in EXTENSION_REGISTRY.values()
-            if ext.extension_type == ExtensionType.OFFICIAL]
+    return [
+        ext
+        for ext in EXTENSION_REGISTRY.values()
+        if ext.extension_type == ExtensionType.OFFICIAL
+    ]
 
 
 def list_vendor_extensions() -> List[Extension]:
     """Get all registered vendor-specific extensions."""
-    return [ext for ext in EXTENSION_REGISTRY.values()
-            if ext.extension_type == ExtensionType.VENDOR]
+    return [
+        ext
+        for ext in EXTENSION_REGISTRY.values()
+        if ext.extension_type == ExtensionType.VENDOR
+    ]
 
 
 # IDE and Documentation support.
