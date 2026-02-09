@@ -1101,4 +1101,4 @@ from .common import units          # blender_to_metre, threemf_to_metre, import_
 from .common import extensions     # ExtensionManager, Extension, MATERIALS_EXTENSION, ... # noqa: E402
 from .common import xml as xml_tools  # parse_transformation, format_transformation, ... # noqa: E402
 from .common import metadata       # Metadata, MetadataEntry # noqa: E402
-from .export_3mf import components # detect_linked_duplicates, ComponentGroup, ... # noqa: E402
+from .export_3mf import components  # detect_linked_duplicates, ComponentGroup, ... # noqa: E402

@@ -98,7 +98,8 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             (
                 "PAINT",
                 "Paint Segmentation",
-                "Export UV-painted regions as hash segmentation for multi-material printing (experimental, may be slow)",
+                "Export UV-painted regions as hash segmentation for multi-material printing"
+                " (experimental, may be slow)",
             ),
         ],
         default="BASEMATERIAL",
