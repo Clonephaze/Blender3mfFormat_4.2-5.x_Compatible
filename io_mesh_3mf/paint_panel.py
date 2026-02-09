@@ -123,9 +123,9 @@ class MMUPaintSettings(bpy.types.PropertyGroup):
 #  Helpers
 # ===================================================================
 
-from .utilities import hex_to_rgb as _rgb_from_hex  # noqa: E402
-from .utilities import rgb_to_hex as _hex_from_rgb  # noqa: E402
-from .utilities import srgb_to_linear as _srgb_to_linear  # noqa: E402
+from .common.colors import hex_to_rgb as _rgb_from_hex  # noqa: E402
+from .common.colors import rgb_to_hex as _hex_from_rgb  # noqa: E402
+from .common.colors import srgb_to_linear as _srgb_to_linear  # noqa: E402
 
 
 def _get_paint_image(obj):

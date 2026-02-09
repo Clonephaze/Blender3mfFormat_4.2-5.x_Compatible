@@ -1,3 +1,48 @@
+2.0.0 — Architecture Restructure & Public API
+====
+
+This is a major restructure of the entire codebase. The monolithic `import_3mf.py` (3055 lines, 56 methods) and `export_3mf.py` have been broken into clean, focused sub-packages. A new public API enables programmatic 3MF workflows without `bpy.ops`. All import/export functionality is unchanged — this is a code organization and robustness release.
+
+> **Breaking:** Scripts that imported internal symbols directly from the old module layout will need updating. The `bpy.ops.import_mesh.threemf()` and `bpy.ops.export_mesh.threemf()` operators are unchanged.
+
+Architecture
+----
+* **`import_3mf/` package** — Operator, context, archive, geometry, builder, scene, slicer detection, and materials sub-package
+* **`export_3mf/` package** — Operator, context, archive, geometry, standard/orca/prusa exporters, components, thumbnail, segmentation, and materials sub-package
+* **`common/` package** — Shared types, constants, colors, logging, XML utilities, units, segmentation codec, extensions, metadata, annotations
+* **Context dataclasses** — `ImportContext` / `ExportContext` replace mutable operator state. Every helper takes `ctx` as its first argument.
+* **Export dispatch** — `StandardExporter`, `OrcaExporter`, `PrusaExporter` classes replace monolithic if/else chains
+
+Public API (`api.py`)
+----
+* **`import_3mf()`** — Headless import with all operator options as keyword arguments
+* **`export_3mf()`** — Headless export with explicit object lists, format selection, callbacks
+* **`inspect_3mf()`** — Read-only archive inspection without creating Blender objects (returns object counts, materials, textures, metadata, extensions, vendor format)
+* **`batch_import()` / `batch_export()`** — Multi-file operations with per-file error isolation
+* **Callbacks** — `on_progress`, `on_warning`, `on_object_created` for monitoring and integration
+* **Building blocks** — Re-exports `colors`, `types`, `segmentation`, `units`, `extensions`, `xml_tools`, `metadata`, `components` sub-namespaces
+* See **[API.md](API.md)** for full documentation and examples
+
+Bug Fixes
+----
+* **Large colorgroup blocking** — 3MF files with 50,000+ colors in a single colorgroup (e.g. 3D scans with per-vertex coloring) no longer hang Blender. Groups exceeding 1,000 entries are skipped with a user-facing warning.
+* **Menu duplicate fix** — Reinstalling the addon via drag-and-drop no longer causes duplicate Import/Export menu entries or `list.remove(x): x not in list` errors. Menu cleanup now matches by function identity rather than object reference.
+* **Multiproperties per-vertex UV fix** — Multiproperties with multiple texture2dgroups now correctly resolve per-vertex UV coordinates from `p1`/`p2`/`p3` indices independently, instead of assigning the same UV to all three vertices.
+* **PBR texture UV round-trip** — PBR textured materials (roughness, metallic, etc.) now export with proper `texture2dgroup` / `tex2coord` UV coordinate data alongside `pbmetallictexturedisplayproperties`. Previously, PBR materials were excluded from texture2dgroup creation, losing UV data on export.
+* **Import texture coordinate source** — Textured materials imported from `texture2dgroup` data now use UV coordinates (not Generated), since a UV layer is guaranteed from the `tex2coord` import. PBR textures on meshes without UV data still fall back to Generated projection.
+* **PBR base color deduplication** — When both `setup_textured_material` and `apply_pbr_textures_to_material` run on the same material, the base color texture is no longer wired twice. The PBR function detects and skips already-connected Base Color inputs.
+* **Texture archive deduplication** — Texture images already written to the archive by the PBR pass are detected and reused instead of being written a second time.
+* **Paint import crash fix** — Fixed `TypeError: render_segmentation_to_texture() got an unexpected keyword argument 'bpy'` caused by a leftover `bpy=bpy` kwarg from the restructure (parameter is named `bpy_module`).
+
+Technical
+----
+* All custom logging uses `common/logging.py` (`debug`, `warn`, `error`, `safe_report`) — no Python `logging` module
+* All tests run in real Blender headless mode (no mocking of Blender APIs)
+* Test suite: 150 unit tests + 128 integration tests, all passing
+* Build: `ThreeMF_io-2.0.0.zip` via `blender --command extension build`
+
+---
+
 1.4.0 — MMU Paint Import/Export Support w/ 3MF Paint panel
 ====
 

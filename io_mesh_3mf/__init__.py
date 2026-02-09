@@ -17,6 +17,7 @@ import bpy.props  # For addon preferences properties.
 import bpy.utils  # To (un)register the add-on.
 
 from . import (
+    common,
     import_3mf,
     export_3mf,
     paint_panel,
@@ -25,13 +26,14 @@ from . import (
 if _needs_reload:
     import importlib
 
+    common = importlib.reload(common)
     import_3mf = importlib.reload(import_3mf)
     export_3mf = importlib.reload(export_3mf)
     paint_panel = importlib.reload(paint_panel)
     pass  # Reloaded
 
-from .export_3mf import Export3MF  # Exports 3MF files.
-from .import_3mf import Import3MF  # Imports 3MF files.
+from .import_3mf import Import3MF
+from .export_3mf import Export3MF
 from .paint_panel import (
     register as register_paint_panel,
     unregister as unregister_paint_panel,
@@ -277,20 +279,42 @@ def register() -> None:
     for cls in classes:
         bpy.utils.register_class(cls)
 
+    # Guard against duplicate menu entries on reinstall / reload.
+    _remove_menu_entries()
     bpy.types.TOPBAR_MT_file_import.append(menu_import)
     bpy.types.TOPBAR_MT_file_export.append(menu_export)
 
     register_paint_panel()
 
 
+def _remove_menu_entries() -> None:
+    """Remove our import/export menu entries, tolerating stale references.
+
+    On reinstall (drag-and-drop zip), Blender may call unregister() with
+    new function objects that don't match the old ones that were append()ed.
+    We walk the draw funcs and remove ANY entry whose qualified name matches
+    ours, regardless of object identity.
+    """
+    for menu, func_name in (
+        (bpy.types.TOPBAR_MT_file_import, menu_import.__qualname__),
+        (bpy.types.TOPBAR_MT_file_export, menu_export.__qualname__),
+    ):
+        draw_funcs = getattr(menu, "_dyn_ui_initialize", lambda: menu.draw._draw_funcs)()
+        to_remove = [f for f in draw_funcs if getattr(f, "__qualname__", None) == func_name]
+        for f in to_remove:
+            try:
+                menu.remove(f)
+            except ValueError:
+                pass
+
+
 def unregister() -> None:
     unregister_paint_panel()
 
+    _remove_menu_entries()
+
     for cls in classes:
         bpy.utils.unregister_class(cls)
-
-    bpy.types.TOPBAR_MT_file_import.remove(menu_import)
-    bpy.types.TOPBAR_MT_file_export.remove(menu_export)
 
 
 # Allow the add-on to be ran directly without installation.
