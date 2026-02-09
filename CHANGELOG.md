@@ -1,18 +1,17 @@
-
-1.4.0 — MMU Paint Suite Improvements
+1.4.0 — MMU Paint Import/Export Support w/ 3MF Paint panel
 ====
 
 Features
 ----
-* **MMU Paint Suite:** New built-in multi-material texture painting system for creating per-triangle filament assignments directly in Blender's 3D Viewport.
-* **Paint Panel:** Dedicated UI panel for initializing, seeing imported colors, changing color zones, adding/removing filament colors, and quickly changing the active paint color.
-* **Improved import dialog:** Better instructions for finding MMU Paint Suite panel after import
-* **Better user feedback:** Filament operations report how many pixels were changed
+* **MMU Paint Import/Export:** Full support for importing and exporting multi-material paint data for Orca Slicer and PrusaSlicer, enabling round-trip workflows between Blender and Orca/Prusa for multi-filament prints.
+* **MMU Paint Suite:** New panel in the N-panel `3MF`. Allows users to initialize multi-material painting on any mesh, manage filament colors, and paint per-triangle filament assignments using Blender's native texture paint tools.
+* **Paint import dialog:** Instructions for finding MMU Paint Suite panel after import, and a button to switch automatically. 
 
 Bug Fixes
 ----
 * **Fixed critical color space mismatch:** 3MF colors are sRGB, Blender materials are linear — now properly converting between them on import, export, and painting
 * **Improved filament operations:** Filament removal and reassignment now provide feedback on pixel counts
+* **Fixed PBR and Normal material import issues:** Materials with PBR textures now import correctly without creating duplicate materials or losing texture relationships
 
 Technical
 ----
