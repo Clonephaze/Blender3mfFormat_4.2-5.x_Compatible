@@ -15,7 +15,9 @@
 Component and instance detection for 3MF export.
 
 This module provides utilities to detect linked duplicates in Blender (objects sharing
-the same mesh data) and organize them for efficient 3MF component export.
+the same mesh data) and organize them for efficient 3MF component export. Also provides
+``collect_mesh_objects`` for recursively gathering MESH objects from a hierarchy that
+may contain nested EMPTYs.
 """
 
 from typing import Dict, List
@@ -24,6 +26,47 @@ from dataclasses import dataclass
 import bpy
 
 from ..common.logging import debug
+
+
+# ---------------------------------------------------------------------------
+# Recursive mesh-object collection
+# ---------------------------------------------------------------------------
+
+def collect_mesh_objects(
+    blender_objects,
+    export_hidden: bool = False,
+) -> List[bpy.types.Object]:
+    """
+    Recursively collect all MESH objects, descending into EMPTY hierarchies.
+
+    Blender users frequently parent mesh objects to empties (and even nest
+    empties inside empties).  A flat ``obj.type == "MESH"`` filter misses any
+    mesh that lives below such a hierarchy.
+
+    :param blender_objects: Iterable of top-level Blender objects to scan.
+    :param export_hidden: When *False*, objects hidden in the viewport
+        (``obj.hide_get() == True``) are skipped along with all their children.
+    :return: Flat list of unique MESH objects found in the hierarchy.
+    """
+    result: List[bpy.types.Object] = []
+    seen: set = set()
+
+    def _walk(objects):
+        for obj in objects:
+            if id(obj) in seen:
+                continue
+            seen.add(id(obj))
+
+            if not export_hidden and obj.hide_get():
+                continue
+
+            if obj.type == "MESH":
+                result.append(obj)
+            elif obj.type == "EMPTY" and obj.children:
+                _walk(obj.children)
+
+    _walk(blender_objects)
+    return result
 
 
 @dataclass
@@ -56,11 +99,12 @@ def detect_linked_duplicates(
     :param blender_objects: List of Blender objects to analyze.
     :return: Dictionary mapping mesh data to ComponentGroup objects.
     """
+    # Use collect_mesh_objects to find meshes at any nesting depth
+    all_mesh_objects = collect_mesh_objects(blender_objects, export_hidden=True)
+
     mesh_to_objects: Dict[bpy.types.Mesh, List[bpy.types.Object]] = {}
 
-    for obj in blender_objects:
-        if obj.type != "MESH":
-            continue
+    for obj in all_mesh_objects:
 
         mesh_data = obj.data
         if mesh_data not in mesh_to_objects:

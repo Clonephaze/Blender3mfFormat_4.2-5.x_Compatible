@@ -34,6 +34,7 @@ from ..common.metadata import Metadata, MetadataEntry
 from .archive import write_core_properties
 from .geometry import write_metadata
 from .materials import collect_face_colors, write_prusa_filament_colors
+from .components import collect_mesh_objects
 from .standard import BaseExporter, StandardExporter
 from .thumbnail import write_thumbnail
 
@@ -68,7 +69,10 @@ class PrusaExporter(BaseExporter):
 
         # For PAINT mode, collect colors from paint texture metadata instead of face materials
         paint_colors_collected = False
-        for blender_object in blender_objects:
+        mesh_objects = collect_mesh_objects(
+            blender_objects, export_hidden=ctx.options.export_hidden
+        )
+        for blender_object in mesh_objects:
             original_object = blender_object
             # Handle evaluated objects
             if hasattr(blender_object, "original"):

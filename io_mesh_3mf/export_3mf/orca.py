@@ -53,6 +53,7 @@ from .materials import (
     collect_face_colors,
     get_triangle_color,
 )
+from .components import collect_mesh_objects
 from .segmentation import texture_to_segmentation
 from .standard import BaseExporter
 from .thumbnail import write_thumbnail
@@ -92,7 +93,10 @@ class OrcaExporter(BaseExporter):
         # For PAINT mode, collect colors from paint texture metadata instead of face materials
         paint_colors_collected = False
         if ctx.options.use_orca_format == "PAINT":
-            for blender_object in blender_objects:
+            mesh_objs_for_paint = collect_mesh_objects(
+                blender_objects, export_hidden=ctx.options.export_hidden
+            )
+            for blender_object in mesh_objs_for_paint:
                 original_object = blender_object
                 if hasattr(blender_object, "original"):
                     original_object = blender_object.original
@@ -140,16 +144,10 @@ class OrcaExporter(BaseExporter):
         # Generate build UUID
         build_uuid = str(uuid.uuid4())
 
-        # Filter mesh objects and track their data
-        mesh_objects = []
-        for blender_object in blender_objects:
-            if not ctx.options.export_hidden and not blender_object.visible_get():
-                continue
-            if blender_object.parent is not None:
-                continue
-            if blender_object.type != "MESH":
-                continue
-            mesh_objects.append(blender_object)
+        # Collect mesh objects recursively (walks into nested empties)
+        mesh_objects = collect_mesh_objects(
+            blender_objects, export_hidden=ctx.options.export_hidden
+        )
 
         if not mesh_objects:
             ctx.safe_report({"ERROR"}, "No mesh objects found to export!")
@@ -391,8 +389,8 @@ class OrcaExporter(BaseExporter):
             }
 
             # Check for segmentation string first (PAINT mode with UV texture)
-            if segmentation_strings and triangle.polygon_index in segmentation_strings:
-                seg_string = segmentation_strings[triangle.polygon_index]
+            if segmentation_strings and tri_idx in segmentation_strings:
+                seg_string = segmentation_strings[tri_idx]
                 if seg_string:
                     tri_attribs["paint_color"] = seg_string
                     xml.etree.ElementTree.SubElement(

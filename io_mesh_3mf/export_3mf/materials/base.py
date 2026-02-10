@@ -33,6 +33,7 @@ from ...common.constants import (
 )
 from ...common import debug, warn
 from ...common.colors import linear_to_srgb
+from ..components import collect_mesh_objects
 
 # Orca Slicer paint_color encoding for filament IDs
 # This matches CONST_FILAMENTS in OrcaSlicer's Model.cpp
@@ -148,9 +149,10 @@ def collect_face_colors(
     unique_colors = set()
     objects_processed = 0
 
-    for blender_object in blender_objects:
-        if blender_object.type != "MESH":
-            continue
+    # Recursively collect mesh objects (walks into nested empties)
+    mesh_list = collect_mesh_objects(blender_objects, export_hidden=True)
+
+    for blender_object in mesh_list:
 
         objects_processed += 1
         debug(f"Processing object: {blender_object.name}")

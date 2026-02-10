@@ -33,6 +33,7 @@ from ..common.logging import warn, error
 from ..common.units import export_unit_scale
 
 from .archive import create_archive
+from .components import collect_mesh_objects
 from .context import ExportContext, ExportOptions
 from .geometry import check_non_manifold_geometry
 from .orca import OrcaExporter
@@ -262,8 +263,11 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
 
             if ctx.options.use_selection:
                 blender_objects = context.selected_objects
-                # Validate that at least one mesh object is selected
-                mesh_objects = [obj for obj in blender_objects if obj.type == "MESH"]
+                # Validate that at least one mesh object is in the selection
+                # (recursively, since meshes may be parented to empties)
+                mesh_objects = collect_mesh_objects(
+                    blender_objects, export_hidden=True
+                )
                 if not mesh_objects:
                     ctx.safe_report(
                         {"ERROR"},
@@ -275,7 +279,9 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                 blender_objects = context.scene.objects
 
             # Check for non-manifold geometry before export
-            mesh_objects = [obj for obj in blender_objects if obj.type == "MESH"]
+            mesh_objects = collect_mesh_objects(
+                blender_objects, export_hidden=ctx.options.export_hidden
+            )
             if mesh_objects:
                 non_manifold_objects = check_non_manifold_geometry(
                     mesh_objects, ctx.options.use_mesh_modifiers

@@ -208,8 +208,8 @@ def write_triangles(
         triangle_element.attrib[v3_name] = str(triangle.vertices[2])
 
         # Handle segmentation strings from UV texture (PAINT mode)
-        if segmentation_strings and triangle.polygon_index in segmentation_strings:
-            seg_string = segmentation_strings[triangle.polygon_index]
+        if segmentation_strings and tri_idx in segmentation_strings:
+            seg_string = segmentation_strings[tri_idx]
             if seg_string:
                 if mmu_slicer_format == "PRUSA":
                     ns_attr = "{http://schemas.slic3r.org/3mf/2017/06}mmu_segmentation"

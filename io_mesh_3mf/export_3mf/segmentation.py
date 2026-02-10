@@ -254,7 +254,7 @@ def texture_to_segmentation(
     :param default_extruder: Default extruder index.
     :param progress_callback: Optional callback(current, total, message) for progress updates.
     :param max_depth: Maximum recursive subdivision depth (4-10, default 7).
-    :return: Dict mapping face_index -> segmentation_hex_string.
+    :return: Dict mapping loop_triangle index -> segmentation_hex_string.
     """
     import time
 
@@ -296,31 +296,30 @@ def texture_to_segmentation(
     uv_layer = mesh.uv_layers.active.data
     seg_strings = {}
 
-    total_faces = sum(1 for p in mesh.polygons if len(p.loop_indices) == 3)
+    # Use loop_triangles to handle both quads and triangles.
+    # mesh.polygons only has the original faces (quads for a default cube),
+    # while loop_triangles gives us the actual triangulated geometry.
+    mesh.calc_loop_triangles()
+    total_faces = len(mesh.loop_triangles)
     debug(
         f"  Processing {total_faces} triangles (max_depth={max_depth})..."
     )
 
     encoder = SegmentationEncoder()
 
-    processed = 0
-    for poly in mesh.polygons:
-        if len(poly.loop_indices) != 3:
-            continue
-
-        processed += 1
+    for tri_idx, tri in enumerate(mesh.loop_triangles):
         # Progress callback every 500 triangles
-        if progress_callback and processed % 500 == 0:
-            progress_callback(processed, total_faces, f"Segmentation: {processed}/{total_faces}")
-        if processed % 2000 == 0:
+        if progress_callback and tri_idx > 0 and tri_idx % 500 == 0:
+            progress_callback(tri_idx, total_faces, f"Segmentation: {tri_idx}/{total_faces}")
+        if tri_idx > 0 and tri_idx % 2000 == 0:
             elapsed = time.perf_counter() - t_state
-            rate = processed / elapsed if elapsed > 0 else 0
-            remaining = (total_faces - processed) / rate if rate > 0 else 0
+            rate = tri_idx / elapsed if elapsed > 0 else 0
+            remaining = (total_faces - tri_idx) / rate if rate > 0 else 0
             debug(
-                f"    {processed}/{total_faces} ({rate:.0f}/s, ~{remaining:.0f}s left)"
+                f"    {tri_idx}/{total_faces} ({rate:.0f}/s, ~{remaining:.0f}s left)"
             )
 
-        li = poly.loop_indices
+        li = tri.loops
         uv0 = uv_layer[li[0]].uv
         uv1 = uv_layer[li[1]].uv
         uv2 = uv_layer[li[2]].uv
@@ -342,7 +341,7 @@ def texture_to_segmentation(
             encoder._nibbles = []
             hex_string = encoder.encode(tree)
             if hex_string and hex_string != "0":
-                seg_strings[poly.index] = hex_string
+                seg_strings[tri_idx] = hex_string
 
     t_end = time.perf_counter()
     debug(

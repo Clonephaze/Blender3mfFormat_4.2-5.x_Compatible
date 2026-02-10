@@ -36,7 +36,7 @@ from ..common.metadata import Metadata
 from ..common.xml import format_transformation
 
 from .archive import write_core_properties
-from .components import detect_linked_duplicates, should_use_components
+from .components import collect_mesh_objects, detect_linked_duplicates, should_use_components
 from .geometry import write_vertices, write_triangles, write_passthrough_triangles, write_metadata
 from .materials import (
     write_materials,
@@ -123,6 +123,12 @@ class StandardExporter(BaseExporter):
             root, f"{{{MODEL_NAMESPACE}}}resources"
         )
 
+        # Resolve all mesh objects recursively (descends into nested empties)
+        # Used for material scanning; write_objects handles hierarchy itself.
+        all_mesh_objects = collect_mesh_objects(
+            blender_objects, export_hidden=ctx.options.export_hidden
+        )
+
         (
             ctx.material_name_to_index,
             ctx.next_resource_id,
@@ -130,14 +136,14 @@ class StandardExporter(BaseExporter):
             basematerials_element,
         ) = write_materials(
             resources_element,
-            blender_objects,
+            all_mesh_objects,
             ctx.options.use_orca_format,
             ctx.vertex_colors,
             ctx.next_resource_id,
         )
 
         # Detect PBR textured materials FIRST — these use pbmetallictexturedisplayproperties
-        pbr_textured_materials = detect_pbr_textured_materials(blender_objects)
+        pbr_textured_materials = detect_pbr_textured_materials(all_mesh_objects)
 
         if pbr_textured_materials and basematerials_element is not None:
             for mat_name, pbr_info in pbr_textured_materials.items():
@@ -171,7 +177,7 @@ class StandardExporter(BaseExporter):
         # Detect and export textured materials — including PBR materials.
         # PBR materials need a texture2dgroup for UV coordinate data;
         # pbmetallictexturedisplayproperties are display hints only.
-        textured_materials = detect_textured_materials(blender_objects)
+        textured_materials = detect_textured_materials(all_mesh_objects)
         ctx.texture_groups = {}
 
         if textured_materials:
@@ -276,10 +282,10 @@ class StandardExporter(BaseExporter):
 
         total_objects = sum(
             1
-            for blender_object in blender_objects
-            if not (blender_object.hide_get() and not ctx.options.export_hidden)
-            and blender_object.parent is None
-            and blender_object.type in {"MESH", "EMPTY"}
+            for obj in blender_objects
+            if not (obj.hide_get() and not ctx.options.export_hidden)
+            and obj.parent is None
+            and obj.type in {"MESH", "EMPTY"}
         )
         processed_objects = 0
 
@@ -388,27 +394,31 @@ class StandardExporter(BaseExporter):
         child_objects = blender_object.children
         components_element = None
         if child_objects:
-            components_element = xml.etree.ElementTree.SubElement(
-                object_element, f"{{{MODEL_NAMESPACE}}}components"
-            )
-            for child in blender_object.children:
-                if child.type != "MESH":
-                    continue
-                child_id, child_transformation = self.write_object_resource(
-                    resources_element, child
+            # Filter to MESH and EMPTY children (recurse into nested empties)
+            exportable_children = [
+                child for child in blender_object.children
+                if child.type in {"MESH", "EMPTY"}
+            ]
+            if exportable_children:
+                components_element = xml.etree.ElementTree.SubElement(
+                    object_element, f"{{{MODEL_NAMESPACE}}}components"
                 )
-                child_transformation = (
-                    mesh_transformation.inverted_safe() @ child_transformation
-                )
-                component_element = xml.etree.ElementTree.SubElement(
-                    components_element, f"{{{MODEL_NAMESPACE}}}component"
-                )
-                ctx.num_written += 1
-                component_element.attrib[self.attr("objectid")] = str(child_id)
-                if child_transformation != mathutils.Matrix.Identity(4):
-                    component_element.attrib[self.attr("transform")] = (
-                        format_transformation(child_transformation)
+                for child in exportable_children:
+                    child_id, child_transformation = self.write_object_resource(
+                        resources_element, child
                     )
+                    child_transformation = (
+                        mesh_transformation.inverted_safe() @ child_transformation
+                    )
+                    component_element = xml.etree.ElementTree.SubElement(
+                        components_element, f"{{{MODEL_NAMESPACE}}}component"
+                    )
+                    ctx.num_written += 1
+                    component_element.attrib[self.attr("objectid")] = str(child_id)
+                    if child_transformation != mathutils.Matrix.Identity(4):
+                        component_element.attrib[self.attr("transform")] = (
+                            format_transformation(child_transformation)
+                        )
 
         # Get vertex data (may need to apply modifiers)
         original_object = blender_object
@@ -617,7 +627,7 @@ class StandardExporter(BaseExporter):
         :param original_object: The original (non-evaluated) Blender object.
         :param eval_object: The evaluated Blender object (with modifiers applied).
         :param mesh: The mesh with loop_triangles already calculated.
-        :return: Dict mapping polygon_index -> hex segmentation string.
+        :return: Dict mapping loop_triangle index -> hex segmentation string.
         """
         import ast
         from ..common.colors import hex_to_rgb
