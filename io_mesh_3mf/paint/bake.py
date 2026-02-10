@@ -268,6 +268,89 @@ class MMU_OT_bake_to_mmu(bpy.types.Operator):
         original_engine = context.scene.render.engine
         context.scene.render.engine = "CYCLES"
 
+        # --- Step 6b: Optimize Cycles settings for fast procedural bake ---
+        cycles = context.scene.cycles
+        original_samples = cycles.samples
+        original_device = cycles.device
+
+        # 1 sample is sufficient — we're baking flat procedural color, not lighting
+        cycles.samples = 1
+
+        # Try GPU compute if available (much faster for large textures)
+        try:
+            cycles_prefs = context.preferences.addons.get("cycles")
+            if cycles_prefs and cycles_prefs.preferences:
+                cprefs = cycles_prefs.preferences
+                if hasattr(cprefs, "get_devices"):
+                    cprefs.get_devices()
+                # Check if any GPU device is enabled
+                has_gpu = False
+                if hasattr(cprefs, "devices"):
+                    for dev in cprefs.devices:
+                        if dev.type != "CPU" and dev.use:
+                            has_gpu = True
+                            break
+                if has_gpu:
+                    cycles.device = "GPU"
+                    debug("Bake to MMU: using GPU compute")
+        except Exception:
+            pass  # Fall back to whatever was configured
+
+        # --- Step 6c: Rewire to Emission for faster bake ---
+        # EMIT bake evaluates only the shader color — skips all lighting,
+        # bounces, and BSDF calculations.  Perfect for color-only bakes.
+        emit_node = None
+        original_surface_socket = None
+        bake_type = "DIFFUSE"
+        bake_pass_filter = {"COLOR"}
+
+        links = mat.node_tree.links
+
+        # Find the Principled BSDF and Material Output nodes
+        principled = None
+        output_node = None
+        for node in nodes:
+            if node.type == "BSDF_PRINCIPLED" and principled is None:
+                principled = node
+            if node.type == "OUTPUT_MATERIAL" and node.is_active_output:
+                output_node = node
+
+        if principled and output_node:
+            # Find what drives Base Color
+            base_color_source = None
+            for link in links:
+                if link.to_node == principled and link.to_socket.name == "Base Color":
+                    base_color_source = link.from_socket
+                    break
+
+            if base_color_source:
+                # Remember what was wired into Material Output → Surface
+                for link in links:
+                    if (
+                        link.to_node == output_node
+                        and link.to_socket.name == "Surface"
+                    ):
+                        original_surface_socket = link.from_socket
+                        break
+
+                # Create a temporary Emission shader wired from the same color source
+                emit_node = nodes.new("ShaderNodeEmission")
+                emit_node.name = "_MMU_Temp_Emission"
+                emit_node.location = (
+                    principled.location.x,
+                    principled.location.y - 200,
+                )
+
+                links.new(base_color_source, emit_node.inputs["Color"])
+                links.new(
+                    emit_node.outputs["Emission"],
+                    output_node.inputs["Surface"],
+                )
+
+                bake_type = "EMIT"
+                bake_pass_filter = set()  # EMIT bake has no pass_filter
+                debug("Bake to MMU: using EMIT bake (skipping lighting)")
+
         # Ensure we're in Object mode for baking
         prev_mode = obj.mode
         if prev_mode != "OBJECT":
@@ -279,26 +362,48 @@ class MMU_OT_bake_to_mmu(bpy.types.Operator):
         context.view_layer.objects.active = obj
 
         # --- Step 7: Bake ---
-        self.report({"INFO"}, "Baking texture (this may take a moment)...")
+        self.report({"INFO"}, "Baking texture...")
         try:
-            bpy.ops.object.bake(
-                type="DIFFUSE",
-                pass_filter={"COLOR"},
-                use_clear=True,
-                margin=2,
-                margin_type="EXTEND",
-            )
+            bake_kwargs = {
+                "type": bake_type,
+                "use_clear": True,
+                "margin": 2,
+                "margin_type": "EXTEND",
+            }
+            if bake_pass_filter:
+                bake_kwargs["pass_filter"] = bake_pass_filter
+            bpy.ops.object.bake(**bake_kwargs)
         except RuntimeError as e:
             error(f"Bake failed: {e}")
             self.report({"ERROR"}, f"Bake failed: {e}")
-            # Clean up
+            # Clean up temp nodes and settings
+            if emit_node:
+                if original_surface_socket:
+                    links.new(
+                        original_surface_socket,
+                        output_node.inputs["Surface"],
+                    )
+                nodes.remove(emit_node)
             nodes.remove(bake_node)
+            cycles.samples = original_samples
+            cycles.device = original_device
             context.scene.render.engine = original_engine
             if prev_mode != "OBJECT":
                 bpy.ops.object.mode_set(mode=prev_mode)
             return {"CANCELLED"}
 
-        # --- Step 8: Restore render engine ---
+        # --- Step 8: Restore render engine and Cycles settings ---
+        # Tear down the temporary Emission wiring
+        if emit_node:
+            if original_surface_socket:
+                links.new(
+                    original_surface_socket,
+                    output_node.inputs["Surface"],
+                )
+            nodes.remove(emit_node)
+
+        cycles.samples = original_samples
+        cycles.device = original_device
         context.scene.render.engine = original_engine
 
         # --- Step 9: Quantize the baked texture ---
