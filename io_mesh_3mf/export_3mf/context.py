@@ -86,6 +86,8 @@ class ExportContext:
 
     # --- Orca-specific ------------------------------------------------------
     orca_object_files: List = field(default_factory=list)
+    project_template_path: Optional[str] = None  # Custom JSON template path
+    object_settings: Dict[str, Dict[str, str]] = field(default_factory=dict)  # Per-object Orca overrides (keyed by object name)
 
     # --- Extension tracking -------------------------------------------------
     extension_manager: ExtensionManager = field(default_factory=ExtensionManager)

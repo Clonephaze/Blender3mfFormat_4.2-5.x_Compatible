@@ -1,3 +1,17 @@
+2.0.1 — Orca Per-Object Settings & Triangle Set Safety
+====
+
+API
+----
+* **Custom Orca project templates** — `export_3mf()` accepts a `project_template` path to replace the built-in `orca_project_template.json` with any printer/filament profile JSON. Falls back to built-in on missing/invalid file.
+* **Per-object Orca setting overrides** — New `object_settings` parameter on `export_3mf()` writes per-object `<metadata>` entries in `model_settings.config`, matching Orca Slicer's native per-object settings format.
+
+Bug Fixes
+----
+* **Triangle set topology guard** — Record original face count on import (`3mf_original_face_count`). Export skips triangle sets with a warning when topology has changed (e.g. faces dissolved), preventing corrupt triangle indices.
+
+---
+
 2.0.0 — Architecture Restructure & Public API
 ====
 
