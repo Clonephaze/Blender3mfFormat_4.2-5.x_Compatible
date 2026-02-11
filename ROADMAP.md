@@ -39,8 +39,9 @@ Features and improvements organized by priority. Complexity ratings help with pl
 
 | Status | Feature | Complexity | Description |
 |--------|---------|------------|-------------|
-| ✅ | Import Triangle Sets | 🟡 | Map to Blender face maps |
-| ✅ | Export Triangle Sets | 🟡 | Export face maps as triangle sets |
+| ✅ | Import Triangle Sets | 🟡 | Read triangle sets as face attributes |
+| ✅ | Export Triangle Sets | 🟡 | Auto-export when attribute exists |
+| 💭 | Triangle Sets UI Panel | 🟡 | Create/edit sets in Blender (face selection → named groups) |
 
 ---
 

@@ -230,7 +230,7 @@ def write_materials(
 
     :param resources_element: A <resources> node from a 3MF document.
     :param blender_objects: A list of Blender objects that may have materials.
-    :param use_orca_format: Material export mode - 'STANDARD', 'BASEMATERIAL', or 'PAINT'.
+    :param use_orca_format: Material export mode - 'STANDARD' or 'PAINT'.
     :param vertex_colors: Dictionary of color hex to index for Orca mode.
     :param next_resource_id: Next available resource ID.
     :param export_pbr: Whether to export PBR display properties (default True).

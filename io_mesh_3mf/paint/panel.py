@@ -154,6 +154,7 @@ class MMUPaintSettings(bpy.types.PropertyGroup):
 from ..common.colors import hex_to_rgb as _rgb_from_hex  # noqa: E402
 from ..common.colors import rgb_to_hex as _hex_from_rgb  # noqa: E402
 from ..common.colors import srgb_to_linear as _srgb_to_linear  # noqa: E402
+from ..common.colors import linear_to_srgb as _linear_to_srgb  # noqa: E402
 
 
 def _get_paint_image(obj):
@@ -362,6 +363,11 @@ class MMU_OT_initialize(bpy.types.Operator):
         )
 
     def execute(self, context):
+        # Push a single undo step so Ctrl+Z restores the entire
+        # pre-initialization state in one go (mode_set and UV ops
+        # inside this method would otherwise fragment the undo stack).
+        bpy.ops.ed.undo_push(message="Before MMU Initialize")
+
         obj = context.active_object
         mesh = obj.data
         settings = context.scene.mmu_paint
@@ -593,6 +599,203 @@ class MMU_OT_reset_init_filaments(bpy.types.Operator):
 
         settings.active_init_filament_index = 0
         return {"FINISHED"}
+
+
+class MMU_OT_detect_material_colors(bpy.types.Operator):
+    """Detect colors from the active object's material setup and populate the filament list"""
+
+    bl_idname = "mmu.detect_material_colors"
+    bl_label = "Detect from Materials"
+    bl_description = (
+        "Scan the active object's shader node trees for colors.\n"
+        "Reads Color Ramp stops, Principled BSDF Base Color, RGB nodes,\n"
+        "and viewport display colors, then populates the filament list"
+    )
+    bl_options = {"INTERNAL"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj is not None
+            and obj.type == "MESH"
+            and obj.data.materials
+            and not obj.data.get("3mf_is_paint_texture")
+        )
+
+    def execute(self, context):
+        obj = context.active_object
+        settings = context.scene.mmu_paint
+        colors = _collect_material_colors(obj)
+
+        if not colors:
+            self.report({"WARNING"}, "No colors detected in materials")
+            return {"CANCELLED"}
+
+        # Clamp to 16 filaments max
+        if len(colors) > 16:
+            colors = colors[:16]
+
+        # Clear existing init filaments and populate with detected colors
+        settings.init_filaments.clear()
+        for i, rgb in enumerate(colors):
+            item = settings.init_filaments.add()
+            item.name = f"Filament {i + 1}"
+            item.color = rgb
+
+        settings.active_init_filament_index = 0
+        self.report({"INFO"}, f"Detected {len(colors)} colors from materials")
+        return {"FINISHED"}
+
+
+# -------------------------------------------------------------------
+#  Material / node-tree color detection helpers
+# -------------------------------------------------------------------
+
+def _collect_material_colors(obj):
+    """Extract unique colors from material slots on *obj*.
+
+    Walks every material's node tree looking for Principled BSDF nodes.
+    If the Base Color input is linked to a Color Ramp, all stop colors
+    are collected.  Other simple nodes (RGB, Hue/Sat, Mix) yield a
+    single color.  Unlinked Base Color default values are read directly.
+    As a last resort the material's viewport ``diffuse_color`` is used.
+
+    Near-duplicate colors (within ~5/255) are merged.
+    """
+    raw_colors = []
+
+    for slot in obj.material_slots:
+        mat = slot.material
+        if mat is None:
+            continue
+
+        found = []
+        if mat.use_nodes and mat.node_tree:
+            found = _extract_node_colors(mat.node_tree)
+
+        # Fallback: viewport display color (already sRGB)
+        if not found:
+            dc = mat.diffuse_color
+            found = [(dc[0], dc[1], dc[2])]
+
+        raw_colors.extend(found)
+
+    return _deduplicate_colors(raw_colors, tolerance=5.0 / 255.0)
+
+
+def _extract_node_colors(node_tree):
+    """Return a list of (r, g, b) sRGB tuples from the node tree.
+
+    Looks at every Principled BSDF and extracts colors from whatever
+    feeds its Base Color input.
+    """
+    colors = []
+    for node in node_tree.nodes:
+        if node.type != "BSDF_PRINCIPLED":
+            continue
+
+        base_input = node.inputs.get("Base Color")
+        if base_input is None:
+            continue
+
+        if base_input.is_linked:
+            linked_node = base_input.links[0].from_node
+            colors.extend(_colors_from_node(linked_node))
+        else:
+            v = base_input.default_value
+            colors.append((
+                _linear_to_srgb(v[0]),
+                _linear_to_srgb(v[1]),
+                _linear_to_srgb(v[2]),
+            ))
+
+    return colors
+
+
+def _colors_from_node(node):
+    """Extract one or more (r, g, b) sRGB colors from a shader node.
+
+    Supported node types:
+    - **Color Ramp** (``VALTORGB``) — every color stop
+    - **RGB** — the node's output value
+    - **Hue/Sat, Gamma, Bright/Contrast** — the Color input default
+    - **Mix / Mix RGB** — both A and B input defaults
+    - **Separate/Combine** and other connector nodes — walks upstream
+    """
+    # ---- Color Ramp (most important for procedural setups) ----
+    if node.type == "VALTORGB":
+        found = []
+        for stop in node.color_ramp.elements:
+            c = stop.color  # linear RGBA
+            found.append((
+                _linear_to_srgb(c[0]),
+                _linear_to_srgb(c[1]),
+                _linear_to_srgb(c[2]),
+            ))
+        return found
+
+    # ---- RGB node ----
+    if node.type == "RGB":
+        v = node.outputs[0].default_value
+        return [(
+            _linear_to_srgb(v[0]),
+            _linear_to_srgb(v[1]),
+            _linear_to_srgb(v[2]),
+        )]
+
+    # ---- Adjustment nodes with a Color input ----
+    if node.type in ("HUE_SAT", "GAMMA", "BRIGHTCONTRAST"):
+        inp = node.inputs.get("Color")
+        if inp and not inp.is_linked:
+            v = inp.default_value
+            return [(
+                _linear_to_srgb(v[0]),
+                _linear_to_srgb(v[1]),
+                _linear_to_srgb(v[2]),
+            )]
+        if inp and inp.is_linked:
+            return _colors_from_node(inp.links[0].from_node)
+
+    # ---- Mix / Mix RGB — collect both sides ----
+    if node.type in ("MIX", "MIX_RGB"):
+        found = []
+        a_input = node.inputs.get("A") or node.inputs.get(6)
+        b_input = node.inputs.get("B") or node.inputs.get(7)
+        for inp in (a_input, b_input):
+            if inp is None:
+                continue
+            if inp.is_linked:
+                found.extend(_colors_from_node(inp.links[0].from_node))
+            else:
+                v = inp.default_value
+                found.append((
+                    _linear_to_srgb(v[0]),
+                    _linear_to_srgb(v[1]),
+                    _linear_to_srgb(v[2]),
+                ))
+        return found
+
+    # ---- Walk upstream through passthrough / connector nodes ----
+    color_input = node.inputs.get("Color") or node.inputs.get(0)
+    if color_input and color_input.is_linked:
+        return _colors_from_node(color_input.links[0].from_node)
+
+    return []
+
+
+def _deduplicate_colors(colors, tolerance=0.02):
+    """Remove near-duplicate (r, g, b) tuples, preserving order."""
+    unique = []
+    for c in colors:
+        is_dup = False
+        for u in unique:
+            if all(abs(a - b) < tolerance for a, b in zip(c, u)):
+                is_dup = True
+                break
+        if not is_dup:
+            unique.append(c)
+    return unique
 
 
 class MMU_OT_select_filament(bpy.types.Operator):
@@ -1084,6 +1287,10 @@ class VIEW3D_PT_mmu_paint(bpy.types.Panel):
                     bake_row = bake_box.row()
                     bake_row.scale_y = 1.2
                     bake_row.operator("mmu.bake_to_mmu", icon="RENDER_STILL")
+                    detect_row = bake_box.row()
+                    detect_row.operator(
+                        "mmu.detect_material_colors", icon="MATERIAL",
+                    )
                     info = bake_box.column(align=True)
                     info.scale_y = 0.7
                     info.label(text="Bake a procedural material to")
@@ -1129,10 +1336,9 @@ class VIEW3D_PT_mmu_paint(bpy.types.Panel):
 
                 if not is_constant:
                     warn_box = layout.box()
-                    warn_row = warn_box.row(align=True)
-                    warn_row.alert = True
-                    warn_row.label(text="Soft edges will cause banding", icon="ERROR")
-                    warn_row.label(text="issues on export")
+                    warn_box.alert = True
+                    warn_box.label(text="Soft edges will cause banding", icon="ERROR")
+                    warn_box.label(text="issues on export")
                     warn_box.operator("mmu.fix_falloff", icon="CHECKMARK")
 
             # --- Quantize button ---
@@ -1185,6 +1391,7 @@ panel_classes = (
     MMU_OT_add_init_filament,
     MMU_OT_remove_init_filament,
     MMU_OT_reset_init_filaments,
+    MMU_OT_detect_material_colors,
     MMU_OT_select_filament,
     MMU_OT_reassign_filament_color,
     MMU_OT_add_filament,

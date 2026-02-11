@@ -194,12 +194,7 @@ class ThreeMFPreferences(bpy.types.AddonPreferences):
             (
                 "STANDARD",
                 "Standard 3MF",
-                "Export basic geometry without material data (maximum compatibility)",
-            ),
-            (
-                "BASEMATERIAL",
-                "Base Material",
-                "Export one solid color per object (simple multi-color prints)",
+                "Export geometry with material colors when present (spec-compliant)",
             ),
             (
                 "PAINT",
@@ -207,14 +202,7 @@ class ThreeMFPreferences(bpy.types.AddonPreferences):
                 "Export UV-painted regions as hash segmentation (experimental, may be slow)",
             ),
         ],
-        default="BASEMATERIAL",
-    )
-
-    default_export_triangle_sets: bpy.props.BoolProperty(
-        name="Export Triangle Sets",
-        description="Export Blender face maps as 3MF triangle sets by default. "
-        "Triangle sets group triangles for selection workflows and property assignment",
-        default=False,
+        default="STANDARD",
     )
 
     default_subdivision_depth: bpy.props.IntProperty(
@@ -253,7 +241,6 @@ class ThreeMFPreferences(bpy.types.AddonPreferences):
         col.prop(self, "default_apply_modifiers", icon="MODIFIER")
         col.prop(self, "default_multi_material_export", icon="COLORSET_01_VEC")
         col.prop(self, "default_subdivision_depth")
-        col.prop(self, "default_export_triangle_sets", icon="OUTLINER_DATA_GP_LAYER")
 
         # Import behavior section
         import_box = layout.box()

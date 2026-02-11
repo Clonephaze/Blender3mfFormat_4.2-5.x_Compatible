@@ -89,12 +89,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             (
                 "STANDARD",
                 "Standard 3MF",
-                "Export geometry without material data (maximum compatibility)",
-            ),
-            (
-                "BASEMATERIAL",
-                "Base Material",
-                "Export one solid color per object using basematerials (simple multi-color prints)",
+                "Export geometry with material colors when present (spec-compliant)",
             ),
             (
                 "PAINT",
@@ -103,15 +98,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                 " (experimental, may be slow)",
             ),
         ],
-        default="BASEMATERIAL",
-    )
-
-    export_triangle_sets: bpy.props.BoolProperty(
-        name="Export Triangle Sets",
-        description="Export Blender face maps as 3MF triangle sets. "
-        "Triangle sets group triangles for selection workflows and property assignment. "
-        "Not compatible with multi-material color zone export.",
-        default=False,
+        default="STANDARD",
     )
 
     use_components: bpy.props.BoolProperty(
@@ -162,7 +149,6 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             self.use_mesh_modifiers = prefs.preferences.default_apply_modifiers
             self.global_scale = prefs.preferences.default_global_scale
             self.use_orca_format = prefs.preferences.default_multi_material_export
-            self.export_triangle_sets = prefs.preferences.default_export_triangle_sets
             self.subdivision_depth = prefs.preferences.default_subdivision_depth
         self.report({"INFO"}, "Exporting, please wait...")
         return super().invoke(context, event)
@@ -188,14 +174,14 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             depth_row.prop(self, "subdivision_depth")
 
         # Tips for material modes
-        if self.use_orca_format in ("BASEMATERIAL", "PAINT"):
+        if self.use_orca_format == "STANDARD":
             info_col = orca_box.column(align=True)
             info_col.scale_y = 0.7
             info_col.label(
-                text="Tip: Assign different materials to faces in Edit Mode",
+                text="Tip: Assign materials to faces in Edit Mode",
                 icon="INFO",
             )
-            info_col.label(text="Each unique color becomes a filament slot in your slicer")
+            info_col.label(text="Each color = filament slot in slicer")
 
         layout.separator()
 
@@ -204,11 +190,6 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
         layout.prop(self, "export_hidden")
         layout.prop(self, "use_mesh_modifiers")
         layout.prop(self, "use_components")
-
-        # Triangle Sets - disabled when using Paint Segmentation (not supported by slicers)
-        triangle_sets_row = layout.row()
-        triangle_sets_row.enabled = self.use_orca_format != "PAINT"
-        triangle_sets_row.prop(self, "export_triangle_sets")
         layout.prop(self, "global_scale")
         layout.prop(self, "coordinate_precision")
 
@@ -231,7 +212,6 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             use_mesh_modifiers=self.use_mesh_modifiers,
             coordinate_precision=self.coordinate_precision,
             use_orca_format=self.use_orca_format,
-            export_triangle_sets=self.export_triangle_sets,
             use_components=self.use_components,
             mmu_slicer_format=self.mmu_slicer_format,
             subdivision_depth=self.subdivision_depth,
@@ -305,7 +285,7 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                     exporter = PrusaExporter(ctx)
                     return exporter.execute(context, archive, blender_objects, global_scale)
 
-            # Standard 3MF export — handles STANDARD, BASEMATERIAL, and texture export
+            # Standard 3MF export — handles geometry, materials, and texture export
             exporter = StandardExporter(ctx)
             return exporter.execute(context, archive, blender_objects, global_scale)
         finally:

@@ -709,8 +709,12 @@ def _draw_bake_panel(layout, context):
             bake_row.scale_y = 1.4
             bake_row.operator("mmu.bake_to_mmu", icon="RENDER_STILL")
 
-            # Reset palette
-            box.operator("mmu.reset_init_filaments", icon="FILE_REFRESH")
+            # Detect + Reset row
+            util_row = box.row(align=True)
+            util_row.operator(
+                "mmu.detect_material_colors", icon="MATERIAL",
+            )
+            util_row.operator("mmu.reset_init_filaments", icon="FILE_REFRESH")
 
         box.separator()
         info = box.column(align=True)

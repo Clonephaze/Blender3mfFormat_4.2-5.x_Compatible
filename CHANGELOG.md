@@ -10,8 +10,19 @@ Architecture
 * **`import_3mf/` package** — Operator, context, archive, geometry, builder, scene, slicer detection, and materials sub-package
 * **`export_3mf/` package** — Operator, context, archive, geometry, standard/orca/prusa exporters, components, thumbnail, segmentation, and materials sub-package
 * **`common/` package** — Shared types, constants, colors, logging, XML utilities, units, segmentation codec, extensions, metadata, annotations
+* **`paint/` package** — MMU Paint Suite panel (`paint/panel.py`) and bake operator (`paint/bake.py`) extracted from monolithic `paint_panel.py`
 * **Context dataclasses** — `ImportContext` / `ExportContext` replace mutable operator state. Every helper takes `ctx` as its first argument.
 * **Export dispatch** — `StandardExporter`, `OrcaExporter`, `PrusaExporter` classes replace monolithic if/else chains
+
+Features
+----
+* **Lightmap UV option for MMU Paint** — Add `paint_uv_method` ("SMART"|"LIGHTMAP") to import operator, API, and paint panel. Smart UV Project (default) shares edges between faces for hand-painting; Lightmap Pack isolates faces for procedural bakes with higher fidelity.
+* **Texture size override** — Add `paint_texture_size` (Auto/1024–16384) to import operator and API. Allows manual control over paint texture resolution instead of auto-sizing by triangle count.
+* **Paint subdivision depth control** — Add `subdivision_depth` (4–10, default 7) to export preferences, operator, API, and `ExportOptions`. Tunes segmentation tree depth for balance between detail and export time.
+* **Nested EMPTY support** — Export now recursively collects mesh objects from nested EMPTY hierarchies (respecting `export_hidden`). Meshes parented under EMPTYs are exported and validated correctly.
+* **Material color detection** — New "Detect from Materials" button in Shader Editor sidebar scans Principled BSDF node trees for colors. Reads Color Ramp stops, RGB nodes, viewport colors, and populates filament palette automatically.
+* **Cycles bake optimization** — Bake-to-MMU workflow uses GPU compute (when available), 1 sample, and temporary Emission shader wiring for 5–10× faster flat/procedural color bakes.
+* **Merged Standard/BaseMaterial export modes** — The separate "Standard 3MF" (geometry only) and "Base Material" modes are unified into a single "Standard 3MF" mode that automatically includes material colors when present. 
 
 Public API (`api.py`)
 ----
@@ -33,6 +44,8 @@ Bug Fixes
 * **PBR base color deduplication** — When both `setup_textured_material` and `apply_pbr_textures_to_material` run on the same material, the base color texture is no longer wired twice. The PBR function detects and skips already-connected Base Color inputs.
 * **Texture archive deduplication** — Texture images already written to the archive by the PBR pass are detected and reused instead of being written a second time.
 * **Paint import crash fix** — Fixed `TypeError: render_segmentation_to_texture() got an unexpected keyword argument 'bpy'` caused by a leftover `bpy=bpy` kwarg from the restructure (parameter is named `bpy_module`).
+* **Triangle indexing fix** — Segmentation export now correctly uses `mesh.loop_triangles` indices (`tri_idx`) instead of polygon indices, fixing incorrect segmentation mappings for meshes with quads/ngons.
+* **Initialize undo fix** — MMU Paint initialization now pushes a single undo step before all operations, so Ctrl+Z restores the complete pre-initialization state instead of fragmenting across mode switches and UV unwraps.
 
 Technical
 ----
@@ -40,6 +53,12 @@ Technical
 * All tests run in real Blender headless mode (no mocking of Blender APIs)
 * Test suite: 150 unit tests + 128 integration tests, all passing
 * Build: `ThreeMF_io-2.0.0.zip` via `blender --command extension build`
+* **Dedicated MMU_Paint UV layer** — Paint initialization and import create/use a dedicated "MMU_Paint" UV layer for segmentation data, keeping painted UVs separate from material texture UVs.
+* **Limited Dissolve pre-unwrap** — Bake and initialize paths run `bmesh.ops.dissolve_limit` (~2° tolerance) before UV unwrap to merge coplanar triangles, giving faces more UV space and reducing blurriness in painted regions.
+* **Segmentation rasterizer improvements** — Add `expand_px` support for per-edge normalized threshold expansion (eliminates 1-pixel gaps at Lightmap Pack UV island boundaries). UV-method-aware gap closing: 2 dilation passes for Smart UV, 6 passes for Lightmap Pack.
+* **Cycles bake optimizations** — Bake temporarily sets `cycles.samples=1`, attempts GPU compute, and rewires material to Emission shader (EMIT bake skips BSDF/lighting for 5–10× speed). Restores original settings on success or failure.
+* **Component EMPTY recursion** — Component child handling now recurses into EMPTY hierarchies and only exports MESH/EMPTY children when assembling 3MF component definitions.
+* **Mesh collection helper** — New `collect_mesh_objects()` recursively gathers MESH objects from scene collections and nested EMPTY hierarchies. Replaces ad-hoc mesh filtering across operator, materials, and exporter modules.
 
 ---
 

@@ -44,7 +44,6 @@ class ExportOptions:
     use_mesh_modifiers: bool = True
     coordinate_precision: int = 9
     use_orca_format: str = "BASEMATERIAL"  # "STANDARD" | "BASEMATERIAL" | "PAINT"
-    export_triangle_sets: bool = False
     use_components: bool = True
     mmu_slicer_format: str = "ORCA"  # "ORCA" | "PRUSA"
     subdivision_depth: int = 7  # 4-10, controls paint segmentation detail

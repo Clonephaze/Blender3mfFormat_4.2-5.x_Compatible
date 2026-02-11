@@ -31,7 +31,7 @@ Quick start::
     # Export
     result = export_3mf(
         "/path/to/output.3mf",
-        use_orca_format="BASEMATERIAL",
+        use_orca_format="STANDARD",
         use_selection=True,
     )
     print(result.status, result.num_written)
@@ -667,8 +667,7 @@ def export_3mf(
     global_scale: float = 1.0,
     use_mesh_modifiers: bool = True,
     coordinate_precision: int = 9,
-    use_orca_format: str = "BASEMATERIAL",
-    export_triangle_sets: bool = False,
+    use_orca_format: str = "STANDARD",
     use_components: bool = True,
     mmu_slicer_format: str = "ORCA",
     subdivision_depth: int = 7,
@@ -689,8 +688,7 @@ def export_3mf(
     :param global_scale: Scale multiplier (default 1.0).
     :param use_mesh_modifiers: Apply modifiers before exporting.
     :param coordinate_precision: Decimal precision for vertex coordinates.
-    :param use_orca_format: ``"STANDARD"`` | ``"BASEMATERIAL"`` | ``"PAINT"``.
-    :param export_triangle_sets: Export face maps as triangle sets.
+    :param use_orca_format: ``"STANDARD"`` | ``"PAINT"``.
     :param use_components: Use component instances for linked duplicates.
     :param mmu_slicer_format: ``"ORCA"`` | ``"PRUSA"`` (only relevant when
         *use_orca_format* is ``"PAINT"``).
@@ -720,7 +718,6 @@ def export_3mf(
         use_mesh_modifiers=use_mesh_modifiers,
         coordinate_precision=coordinate_precision,
         use_orca_format=use_orca_format,
-        export_triangle_sets=export_triangle_sets,
         use_components=use_components,
         mmu_slicer_format=mmu_slicer_format,
         subdivision_depth=subdivision_depth,
@@ -914,7 +911,7 @@ def batch_export(
         results = batch_export([
             ("cubes.3mf", cubes),
             ("spheres.3mf", spheres),
-        ], use_orca_format="BASEMATERIAL")
+        ], use_orca_format="STANDARD")
     """
     results: List[ExportResult] = []
     total = len(items)

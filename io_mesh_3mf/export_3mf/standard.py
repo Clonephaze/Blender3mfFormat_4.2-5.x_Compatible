@@ -77,7 +77,7 @@ class BaseExporter:
         In standard 3MF mode with default_namespace, they need the prefix.
         """
         if (
-            self.ctx.options.use_orca_format in ("PAINT", "BASEMATERIAL")
+            self.ctx.options.use_orca_format in ("PAINT", "STANDARD")
             or self.ctx.options.mmu_slicer_format == "PRUSA"
         ):
             return name
@@ -100,11 +100,6 @@ class StandardExporter(BaseExporter):
         Uses core 3MF spec with optional basematerials and triangle sets.
         """
         ctx = self.ctx
-
-        # Activate Triangle Sets extension if enabled
-        if ctx.options.export_triangle_sets:
-            ctx.extension_manager.activate(TRIANGLE_SETS_EXTENSION.namespace)
-            debug("Activated Triangle Sets extension")
 
         # Register all active extension namespaces with ElementTree
         ctx.extension_manager.register_namespaces(xml.etree.ElementTree)
@@ -493,9 +488,9 @@ class StandardExporter(BaseExporter):
                             has_textured_material = True
                             break
 
-                # In BASEMATERIAL mode, use face colors mapped to colorgroup IDs
+                # In STANDARD mode, use face colors mapped to colorgroup IDs
                 if (
-                    ctx.options.use_orca_format == "BASEMATERIAL"
+                    ctx.options.use_orca_format == "STANDARD"
                     and ctx.vertex_colors
                     and ctx.options.mmu_slicer_format == "ORCA"
                 ):
@@ -590,8 +585,13 @@ class StandardExporter(BaseExporter):
                     segmentation_strings,
                 )
 
-            # Write triangle sets if enabled
-            if ctx.options.export_triangle_sets and "3mf_triangle_set" in mesh.attributes:
+            # Write triangle sets if present (auto-export utility metadata)
+            # Skipped when PAINT mode is active since segmentation data replaces it
+            if ctx.options.use_orca_format != "PAINT" and "3mf_triangle_set" in mesh.attributes:
+                # Activate extension on first use
+                if not ctx.extension_manager.is_active(TRIANGLE_SETS_EXTENSION.namespace):
+                    ctx.extension_manager.activate(TRIANGLE_SETS_EXTENSION.namespace)
+                    debug("Activated Triangle Sets extension")
                 write_triangle_sets(mesh_element, mesh)
 
             # Write metadata
@@ -761,7 +761,7 @@ class StandardExporter(BaseExporter):
                         break
 
             if (
-                ctx.options.use_orca_format == "BASEMATERIAL"
+                ctx.options.use_orca_format == "STANDARD"
                 and ctx.vertex_colors
                 and ctx.options.mmu_slicer_format == "ORCA"
             ):
