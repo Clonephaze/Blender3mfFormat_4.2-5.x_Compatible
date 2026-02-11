@@ -1,16 +1,14 @@
 # Contributing
 
-Thanks for your interest in contributing to **Blender 3MF Format (Blender 4.2+ compatible fork)**.
+Thanks for your interest in contributing to **Blender 3MF Format**.
 
-This repository is a maintained modernization of the original add-on (created by Ghostkeeper) to keep it working on modern Blender versions. Contributions here focus on **correctness, compatibility, and keeping import/export behavior predictable**.
+This addon provides comprehensive **3MF Core Spec v1.4.0** import/export for Blender 5.0+ (minimum Blender 4.2+), with multi-material paint support for Orca Slicer, BambuStudio, PrusaSlicer, and SuperSlicer. It's a complete modernization of the original add-on (created by Ghostkeeper) with a focus on **correctness, spec compliance, and predictable import/export behavior**.
 
 ## Where development happens
 
-Development and issue tracking happens in **this** repository:
+Development and issue tracking happens in this repository.
 
-- https://github.com/Clonephaze/Blender3mfFormat---4.2-compatible
-
-If you’re looking for the historical upstream, see:
+Historical upstream (no longer maintained):
 
 - https://github.com/Ghostkeeper/Blender3mfFormat
 
@@ -18,17 +16,20 @@ If you’re looking for the historical upstream, see:
 
 Good contributions include:
 
-- Fixes for Blender 4.2+ API changes / regressions
+- Fixes for Blender 4.2+ / 5.0+ API changes / regressions
 - 3MF import/export correctness fixes (especially edge cases)
 - Test coverage (unit or integration)
-- Documentation improvements
-- Small quality-of-life improvements that don’t change file semantics
+- Documentation improvements (README, API docs, copilot instructions)
+- MMU Paint Suite improvements (paint panel, texture handling)
+- Small quality-of-life improvements that don't change file semantics
+- Triangle Sets / Materials Extension support improvements
 
 Non-goals (usually):
 
-- “Opinionated” transformations of scene data on import/export
+- "Opinionated" transformations of scene data on import/export
 - Silent data loss or auto-fixing invalid files without clearly reporting it
 - Large refactors without a clear benefit or test coverage
+- Breaking changes to the public API (`api.py`) without strong justification
 
 ## Bug reports
 
@@ -36,20 +37,21 @@ Before opening a new issue, please search existing issues first.
 
 When reporting a bug, include:
 
-1. **Blender version** (e.g. 4.2.3 LTS / 4.3.x / 4.4.x)
+1. **Blender version** (e.g. 4.2.x LTS / 5.0.x - primary dev version is 5.0)
 2. **OS** (Windows/macOS/Linux) and relevant hardware notes
 3. **Steps to reproduce** (a minimal, reliable recipe)
 4. **Expected vs actual behavior**
-5. **Logs / traceback** (copy/paste in the issue)
+5. **Logs / traceback** (copy/paste from the system console, accessible via Window → Toggle System Console)
 6. If relevant, a **minimal .3mf sample file**
+7. For paint/segmentation issues: screenshots of the texture or face colors
 
-If your file contains sensitive data, don’t post it publicly. Instead, try to reproduce the issue with a sanitized/minimal file.
+If your file contains sensitive data, don't post it publicly. Instead, try to reproduce the issue with a sanitized/minimal file.
 
 ## Feature requests
 
 Feature requests are welcome, but please keep the scope aligned with the project:
 
-- The add-on’s purpose is to **load and save 3MF files**.
+- The add-on's purpose is to **load and save 3MF files**.
 - Changes that modify geometry/materials beyond what the format requires should be kept minimal.
 
 When requesting a feature, describe:
@@ -72,42 +74,58 @@ Pull requests are welcome.
 
 ### Testing requirements
 
-This project has both **unit tests** and **integration tests**.
+This project has **unit tests** and **integration tests**. All tests run in **real Blender headless mode** — no mocking. They require Blender's Python interpreter.
 
-#### Unit tests (fast, no Blender required)
+#### Run all tests (recommended before submitting PR)
 
-From the repository root:
-
-```bash
-python -m unittest test
-```
-
-These tests mock Blender’s API and validate internal logic.
-
-#### Integration tests (runs inside Blender)
-
-These tests run with a real Blender installation and validate end-to-end import/export behavior.
-
-Windows:
+Windows (PowerShell):
 
 ```powershell
-.\test\run_integration_tests.ps1
+python tests/run_all_tests.py
 ```
 
-macOS/Linux:
+This spawns separate Blender processes for unit and integration tests, reporting pass/fail for both suites.
 
-```bash
-./test/run_integration_tests.sh
+#### Unit tests only
+
+Tests for individual functions (colors, segmentation codec, XML parsing, units, etc.) without creating Blender objects:
+
+```powershell
+blender --background --factory-startup --python-exit-code 1 -noaudio -q --python tests/run_unit_tests.py
 ```
 
-There is also a newer pytest-based integration suite under `tests/` (recommended for end-to-end checks). See `tests/README.md` for details.
+Located in `tests/unit/`
 
-### Code style
+#### Integration tests only
 
-- Follow [Blender’s Python style guide](https://wiki.blender.org/wiki/Style_Guide/Python)
-- PEP-8 compatible
+End-to-end tests that create real Blender objects, import/export `.3mf` files, and validate materials/geometry:
+
+```powershell
+blender --background --factory-startup --python-exit-code 1 -noaudio -q --python tests/run_tests.py
+```
+
+Located in `tests/integration/`
+
+Test resources (sample files) are in `tests/resources/` and `tests/resources/3mf_consortium/`
+
+**Note:** All tests require Blender's Python — don't use system Python or virtualenvs. You need Blender installed and available on your PATH.
+
+### Code style and architecture
+
+- Follow [Blender's Python style guide](https://wiki.blender.org/wiki/Style_Guide/Python)
+- PEP-8 compatible (`<pep8 compliant>` in headers)
 - Keep changes focused and readable
 - Prefer adding tests for bug fixes and behavior changes
+
+**Architecture notes:**
+
+- **Context dataclasses** — `ImportContext` / `ExportContext` replace mutable operator state. All helpers take `ctx` as first arg.
+- **NO `logging` module** — use `common.logging` (`debug()`, `warn()`, `error()`) exclusively. Python's `logging` does nothing in Blender.
+- **NO `print()` calls** — use `debug()` for dev output, `warn()`/`error()` for real issues.
+- **Cache Blender strings** before XML ops — Python may GC the C string behind `blender_object.name`
+- **Blender properties can't start with `_`** — use `3mf_` prefix for custom properties
+- **Sub-package imports** — use `from ..common import ...` for common utilities
+- See `.github/copilot-instructions.md` for full architecture documentation
 
 ### Commit messages
 
@@ -120,11 +138,11 @@ Good examples:
 
 ### Changelog
 
-Please don’t update `CHANGES.md` unless you’re asked to. Maintainers will handle release notes.
+Please don't update `CHANGELOG.md` unless you're asked to. Maintainers will handle release notes.
 
 ## Reviewing PRs is also contributing
 
-If you’re not ready to code, you can still help by:
+If you're not ready to code, you can still help by:
 
 - Trying the add-on on your Blender version and reporting results
 - Testing PR branches
