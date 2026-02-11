@@ -671,6 +671,8 @@ def export_3mf(
     use_components: bool = True,
     mmu_slicer_format: str = "ORCA",
     subdivision_depth: int = 7,
+    project_template: Optional[str] = None,
+    object_settings: Optional[Dict] = None,
     on_progress: Optional[ProgressCallback] = None,
     on_warning: Optional[WarningCallback] = None,
 ) -> ExportResult:
@@ -688,12 +690,41 @@ def export_3mf(
     :param global_scale: Scale multiplier (default 1.0).
     :param use_mesh_modifiers: Apply modifiers before exporting.
     :param coordinate_precision: Decimal precision for vertex coordinates.
-    :param use_orca_format: ``"STANDARD"`` | ``"PAINT"``.
+    :param use_orca_format: ``"STANDARD"`` | ``"PAINT"``.  When
+        *project_template* or *object_settings* is provided, the Orca
+        exporter is used automatically even if this is ``"STANDARD"``.
     :param use_components: Use component instances for linked duplicates.
     :param mmu_slicer_format: ``"ORCA"`` | ``"PRUSA"`` (only relevant when
         *use_orca_format* is ``"PAINT"``).
     :param subdivision_depth: Maximum recursive subdivision depth for paint
         segmentation (4–10, default 7). Higher = finer detail but slower.
+    :param project_template: Absolute path to a JSON file to use as the Orca
+        ``project_settings.config`` instead of the built-in template.  The
+        addon loads this file, patches ``filament_colour`` and resizes
+        filament arrays to match the export, then writes it to the archive.
+        If the file does not exist or is invalid JSON, a warning is logged
+        and the built-in template is used as a fallback.  Only relevant for
+        Orca/BambuStudio exports (``mmu_slicer_format="ORCA"``).
+    :param object_settings: Per-object Orca Slicer setting overrides.
+        A dict mapping ``bpy.types.Object`` instances to dicts of
+        ``{setting_key: value_string}`` pairs.  These are written as
+        ``<metadata>`` entries in ``model_settings.config`` so that Orca
+        applies different print settings to individual objects.  Keys are
+        passed through without validation — any valid Orca setting key
+        (e.g. ``"layer_height"``, ``"wall_loops"``, ``"sparse_infill_speed"``)
+        is accepted.  Objects not present in this dict use project defaults.
+
+        Example::
+
+            object_settings={
+                supports_obj: {
+                    "layer_height": "0.12",
+                    "wall_loops": "2",
+                    "sparse_infill_speed": "50",
+                },
+                # other objects use project defaults
+            }
+
     :param on_progress: Optional ``(percentage: int, message: str)`` callback.
     :param on_warning: Optional ``(message: str)`` callback for warnings.
     :return: :class:`ExportResult` with status, written count, and filepath.
@@ -728,6 +759,18 @@ def export_3mf(
         filepath=filepath,
         extension_manager=ExtensionManager(),
     )
+
+    # Wire up custom project template path.
+    if project_template is not None:
+        ctx.project_template_path = os.path.abspath(project_template)
+
+    # Wire up per-object setting overrides (convert Object keys to name strings).
+    if object_settings is not None:
+        for obj, settings_dict in object_settings.items():
+            obj_name = str(obj.name)
+            ctx.object_settings[obj_name] = {
+                str(k): str(v) for k, v in settings_dict.items()
+            }
 
     # Wire up warning callback.
     if on_warning is not None:
@@ -791,7 +834,16 @@ def export_3mf(
             if mmu_slicer_format == "ORCA":
                 exporter = OrcaExporter(ctx)
             else:
+                if ctx.project_template_path or ctx.object_settings:
+                    warn(
+                        "project_template and object_settings are Orca-specific "
+                        "features and will be ignored for PrusaSlicer export"
+                    )
                 exporter = PrusaExporter(ctx)
+        elif ctx.project_template_path or ctx.object_settings:
+            # Orca-specific API features requested — use OrcaExporter
+            # regardless of material mode so project/object settings are written
+            exporter = OrcaExporter(ctx)
         else:
             exporter = StandardExporter(ctx)
 

@@ -280,13 +280,23 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             if ctx.options.use_orca_format == "PAINT":
                 if ctx.options.mmu_slicer_format == "ORCA":
                     exporter = OrcaExporter(ctx)
-                    return exporter.execute(context, archive, blender_objects, global_scale)
                 elif ctx.options.mmu_slicer_format == "PRUSA":
+                    if ctx.project_template_path or ctx.object_settings:
+                        warn(
+                            "project_template and object_settings are Orca-specific "
+                            "features and will be ignored for PrusaSlicer export"
+                        )
                     exporter = PrusaExporter(ctx)
-                    return exporter.execute(context, archive, blender_objects, global_scale)
+                else:
+                    exporter = StandardExporter(ctx)
+            elif ctx.project_template_path or ctx.object_settings:
+                # Orca-specific API features requested — use OrcaExporter
+                # regardless of material mode so project/object settings are written
+                exporter = OrcaExporter(ctx)
+            else:
+                # Standard 3MF export — geometry, materials, and texture export
+                exporter = StandardExporter(ctx)
 
-            # Standard 3MF export — handles geometry, materials, and texture export
-            exporter = StandardExporter(ctx)
             return exporter.execute(context, archive, blender_objects, global_scale)
         finally:
             ctx._progress_end()

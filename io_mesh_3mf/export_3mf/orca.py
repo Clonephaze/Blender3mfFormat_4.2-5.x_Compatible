@@ -214,7 +214,7 @@ class OrcaExporter(BaseExporter):
 
         # Write Orca metadata files
         ctx._progress_update(96, "Writing configuration...")
-        self.write_orca_metadata(archive, mesh_objects)
+        self.write_orca_metadata(archive, mesh_objects, object_data)
 
         # Write thumbnail if available from .blend file
         ctx._progress_update(99, "Writing thumbnail...")
@@ -576,9 +576,17 @@ class OrcaExporter(BaseExporter):
         debug("Wrote 3D/_rels/3dmodel.model.rels")
 
     def write_orca_metadata(
-        self, archive: zipfile.ZipFile, blender_objects: List[bpy.types.Object]
+        self,
+        archive: zipfile.ZipFile,
+        blender_objects: List[bpy.types.Object],
+        object_data: List[dict],
     ) -> None:
-        """Write Orca Slicer compatible metadata files to the archive."""
+        """Write Orca Slicer compatible metadata files to the archive.
+
+        :param archive: The ZIP archive to write into.
+        :param blender_objects: The Blender objects being exported.
+        :param object_data: Per-object export data dicts from ``execute()``.
+        """
         ctx = self.ctx
         debug("Writing Orca metadata files...")
 
@@ -590,7 +598,9 @@ class OrcaExporter(BaseExporter):
             debug("Wrote project_settings.config")
 
             # Write model_settings.config with object metadata
-            model_settings_xml = self.generate_model_settings(blender_objects)
+            model_settings_xml = self.generate_model_settings(
+                blender_objects, object_data
+            )
             with archive.open("Metadata/model_settings.config", "w") as f:
                 f.write(model_settings_xml.encode("utf-8"))
             debug("Wrote model_settings.config")
@@ -602,14 +612,42 @@ class OrcaExporter(BaseExporter):
             raise
 
     def generate_project_settings(self) -> dict:
-        """Generate project_settings.config by loading template and updating filament colors."""
+        """Generate project_settings.config by loading template and updating filament colors.
+
+        If ``ctx.project_template_path`` is set, loads the custom JSON file
+        instead of the built-in ``orca_project_template.json``.  Falls back
+        to the built-in template on missing file or invalid JSON.
+        """
         ctx = self.ctx
 
+        # Determine which template to load
         addon_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-        template_path = os.path.join(addon_dir, "orca_project_template.json")
+        builtin_path = os.path.join(addon_dir, "orca_project_template.json")
+        template_path = builtin_path
 
-        with open(template_path, "r", encoding="utf-8") as f:
-            settings = json.load(f)
+        if ctx.project_template_path:
+            if os.path.isfile(ctx.project_template_path):
+                template_path = ctx.project_template_path
+                debug(f"Using custom project template: {template_path}")
+            else:
+                warn(
+                    f"Custom project template not found: {ctx.project_template_path}. "
+                    f"Falling back to built-in template."
+                )
+
+        try:
+            with open(template_path, "r", encoding="utf-8") as f:
+                settings = json.load(f)
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            if template_path != builtin_path:
+                warn(
+                    f"Invalid JSON in custom template: {e}. "
+                    f"Falling back to built-in template."
+                )
+                with open(builtin_path, "r", encoding="utf-8") as f:
+                    settings = json.load(f)
+            else:
+                raise
 
         sorted_colors = sorted(ctx.vertex_colors.items(), key=lambda x: x[1])
         color_list = [color_hex for color_hex, _ in sorted_colors]
@@ -665,40 +703,73 @@ class OrcaExporter(BaseExporter):
 
         return settings
 
-    def generate_model_settings(self, blender_objects: List[bpy.types.Object]) -> str:
-        """Generate the model_settings.config XML for Orca Slicer."""
+    def generate_model_settings(
+        self,
+        blender_objects: List[bpy.types.Object],
+        object_data: List[dict],
+    ) -> str:
+        """Generate the model_settings.config XML for Orca Slicer.
+
+        :param blender_objects: The Blender objects being exported.
+        :param object_data: Per-object export data dicts from ``execute()``,
+            containing ``wrapper_id``, ``mesh_id``, ``transformation``, and ``name``.
+        """
+        ctx = self.ctx
         root = xml.etree.ElementTree.Element("config")
 
-        object_id = 2  # Start from 2
+        # Build a lookup from object name to its object_data entry
+        obj_data_by_name: dict = {}
+        for od in object_data:
+            obj_data_by_name[od["name"]] = od
 
         for blender_object in blender_objects:
             if blender_object.type != "MESH":
                 continue
 
+            obj_name = str(blender_object.name)
+            od = obj_data_by_name.get(obj_name)
+            if od is None:
+                continue
+
+            wrapper_id = od["wrapper_id"]
+            mesh_id = od["mesh_id"]
+
             object_elem = xml.etree.ElementTree.SubElement(
-                root, "object", id=str(object_id)
+                root, "object", id=str(wrapper_id)
             )
             xml.etree.ElementTree.SubElement(
-                object_elem, "metadata", key="name", value=str(blender_object.name)
+                object_elem, "metadata", key="name", value=obj_name
             )
             xml.etree.ElementTree.SubElement(
                 object_elem, "metadata", key="extruder", value="1"
             )
 
+            # Per-object setting overrides (passthrough, no validation)
+            if obj_name in ctx.object_settings:
+                for setting_key, setting_value in ctx.object_settings[obj_name].items():
+                    xml.etree.ElementTree.SubElement(
+                        object_elem,
+                        "metadata",
+                        key=str(setting_key),
+                        value=str(setting_value),
+                    )
+                debug(
+                    f"Wrote {len(ctx.object_settings[obj_name])} per-object overrides "
+                    f"for '{obj_name}'"
+                )
+
             part_elem = xml.etree.ElementTree.SubElement(
-                object_elem, "part", id="1", subtype="normal_part"
+                object_elem, "part", id=str(mesh_id), subtype="normal_part"
             )
             xml.etree.ElementTree.SubElement(
-                part_elem, "metadata", key="name", value=str(blender_object.name)
+                part_elem, "metadata", key="name", value=obj_name
             )
             matrix_value = "1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1"
             xml.etree.ElementTree.SubElement(
                 part_elem, "metadata", key="matrix", value=matrix_value
             )
 
-            object_id += 1
-
-        # Add plate metadata
+        # Add plate metadata with model_instance entries
         plate_elem = xml.etree.ElementTree.SubElement(root, "plate")
         xml.etree.ElementTree.SubElement(
             plate_elem, "metadata", key="plater_id", value="1"
@@ -713,16 +784,38 @@ class OrcaExporter(BaseExporter):
             plate_elem, "metadata", key="filament_map_mode", value="Auto For Flush"
         )
 
-        # Add assemble section
+        for od in object_data:
+            instance_elem = xml.etree.ElementTree.SubElement(
+                plate_elem, "model_instance"
+            )
+            xml.etree.ElementTree.SubElement(
+                instance_elem,
+                "metadata",
+                key="object_id",
+                value=str(od["wrapper_id"]),
+            )
+            xml.etree.ElementTree.SubElement(
+                instance_elem, "metadata", key="instance_id", value="0"
+            )
+            xml.etree.ElementTree.SubElement(
+                instance_elem,
+                "metadata",
+                key="identify_id",
+                value=str(od["wrapper_id"]),
+            )
+
+        # Add assemble section with real world transforms
         assemble_elem = xml.etree.ElementTree.SubElement(root, "assemble")
-        xml.etree.ElementTree.SubElement(
-            assemble_elem,
-            "assemble_item",
-            object_id="2",
-            instance_id="0",
-            transform="1 0 0 0 1 0 0 0 1 0 0 0",
-            offset="0 0 0",
-        )
+        for od in object_data:
+            transform_str = format_transformation(od["transformation"])
+            xml.etree.ElementTree.SubElement(
+                assemble_elem,
+                "assemble_item",
+                object_id=str(od["wrapper_id"]),
+                instance_id="0",
+                transform=transform_str,
+                offset="0 0 0",
+            )
 
         tree = xml.etree.ElementTree.ElementTree(root)
 
