@@ -137,6 +137,44 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         default="KEEP",
     )
 
+    # ----- Advanced MMU Paint settings (collapsed by default) ---------------
+
+    show_advanced: bpy.props.BoolProperty(
+        name="Advanced Settings",
+        description="Show advanced MMU paint import settings",
+        default=False,
+    )
+    paint_uv_method: bpy.props.EnumProperty(
+        name="UV Method",
+        description=(
+            "UV unwrap method for MMU paint texture rendering.\n"
+            "Smart UV Project groups adjacent faces into contiguous islands — "
+            "best for seamless pixel coverage with the built-in rasterizer.\n"
+            "Lightmap Pack gives every face its own rectangle — higher fidelity "
+            "but may show gaps at triangle edges"
+        ),
+        items=[
+            ("SMART", "Smart UV Project",
+             "Groups coplanar faces into islands (best for most models)"),
+            ("LIGHTMAP", "Lightmap Pack",
+             "Every face gets unique UV space (higher fidelity, may show edge gaps)"),
+        ],
+        default="SMART",
+    )
+    paint_texture_size: bpy.props.EnumProperty(
+        name="Texture Size",
+        description="Resolution of the MMU paint texture",
+        items=[
+            ("0", "Auto", "Automatic based on triangle count (2K / 4K / 8K)"),
+            ("1024", "1024", "1024\u00d71024 (fast, lower detail)"),
+            ("2048", "2048", "2048\u00d72048 (good for simple models)"),
+            ("4096", "4096", "4096\u00d74096 (recommended for most models)"),
+            ("8192", "8192", "8192\u00d78192 (high detail, uses more memory)"),
+            ("16384", "16384", "16384\u00d716384 (very high detail, slow)"),
+        ],
+        default="0",
+    )
+
     # ----- UI ---------------------------------------------------------------
 
     def draw(self, context):
@@ -163,6 +201,20 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
         if self.import_location == "GRID":
             placement_box.prop(self, "grid_spacing")
         placement_box.prop(self, "origin_to_geometry")
+
+        # --- Advanced settings (collapsible, only relevant for MMU Paint) ---
+        if self.import_materials == "PAINT":
+            layout.separator()
+            adv_box = layout.box()
+            adv_header = adv_box.row()
+            adv_header.prop(
+                self, "show_advanced",
+                icon="TRIA_DOWN" if self.show_advanced else "TRIA_RIGHT",
+                emboss=False,
+            )
+            if self.show_advanced:
+                adv_box.prop(self, "paint_uv_method")
+                adv_box.prop(self, "paint_texture_size")
 
     def invoke(self, context, event):
         """Initialize properties from preferences when the import dialog opens."""
@@ -245,6 +297,8 @@ class Import3MF(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
             import_location=self.import_location,
             origin_to_geometry=self.origin_to_geometry,
             grid_spacing=self.grid_spacing,
+            paint_uv_method=self.paint_uv_method,
+            paint_texture_size=int(self.paint_texture_size),
         )
         ctx = ImportContext(options=options, operator=self)
 

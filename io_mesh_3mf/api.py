@@ -386,6 +386,8 @@ def import_3mf(
     import_location: str = "KEEP",
     origin_to_geometry: str = "KEEP",
     grid_spacing: float = 0.1,
+    paint_uv_method: str = "SMART",
+    paint_texture_size: int = 0,
     target_collection: Optional[str] = None,
     on_progress: Optional[ProgressCallback] = None,
     on_warning: Optional[WarningCallback] = None,
@@ -404,6 +406,9 @@ def import_3mf(
     :param import_location: ``"ORIGIN"`` | ``"CURSOR"`` | ``"KEEP"`` | ``"GRID"``.
     :param origin_to_geometry: ``"KEEP"`` | ``"CENTER"`` | ``"BOTTOM"``.
     :param grid_spacing: Spacing between objects in grid layout mode.
+    :param paint_uv_method: ``"SMART"`` (default) or ``"LIGHTMAP"``.
+        Smart UV groups adjacent faces; Lightmap gives each face unique space.
+    :param paint_texture_size: Override texture resolution (0 = auto).
     :param target_collection: Name of an existing Blender collection to place
         imported objects into.  If *None*, objects are added to the active
         collection.  If the named collection does not exist it will be created
@@ -455,6 +460,8 @@ def import_3mf(
         import_location=import_location,
         origin_to_geometry=origin_to_geometry,
         grid_spacing=grid_spacing,
+        paint_uv_method=paint_uv_method,
+        paint_texture_size=paint_texture_size,
     )
     ctx = ImportContext(options=options, operator=None)
 

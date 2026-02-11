@@ -26,6 +26,7 @@ Features:
 """
 
 import ast
+import bmesh
 import numpy as np
 import bpy
 import bpy.props
@@ -113,6 +114,33 @@ class MMUPaintSettings(bpy.types.PropertyGroup):
     active_init_filament_index: bpy.props.IntProperty(
         name="Active Init Filament",
         default=0,
+    )
+
+    # UV method for painting / baking
+    uv_method: bpy.props.EnumProperty(
+        name="UV Method",
+        description=(
+            "UV unwrap strategy for MMU paint textures.\n"
+            "Smart UV Project shares edges between faces for seamless painting.\n"
+            "Lightmap Pack gives every face its own rectangle — best for "
+            "procedural bakes but may show edge bleed when hand-painting"
+        ),
+        items=[
+            ("SMART", "Smart UV Project",
+             "Groups adjacent coplanar faces into shared islands. "
+             "Best for hand-painting (shared edges reduce bleed)"),
+            ("LIGHTMAP", "Lightmap Pack",
+             "Every face gets its own UV rectangle. "
+             "Best for procedural/baked textures"),
+        ],
+        default="SMART",
+    )
+    lightmap_divisions: bpy.props.IntProperty(
+        name="Lightmap Divisions",
+        description="Grid divisions for Lightmap Pack (higher = more UV precision, slower)",
+        min=1,
+        max=48,
+        default=12,
     )
 
     # Internal: tracks which mesh the filament list was loaded from
@@ -343,25 +371,51 @@ class MMU_OT_initialize(bpy.types.Operator):
             self.report({"ERROR"}, "At least 2 filaments required")
             return {"CANCELLED"}
 
-        # --- UV unwrap if needed ---
-        if not mesh.uv_layers:
-            mesh.uv_layers.new(name="UVMap")
+        # --- Create dedicated MMU_Paint UV layer ---
+        mmu_layer = mesh.uv_layers.get("MMU_Paint")
+        if mmu_layer is None:
+            mmu_layer = mesh.uv_layers.new(name="MMU_Paint")
+        mesh.uv_layers.active = mmu_layer
+        mmu_layer.active_render = True
 
-        # Must be active object for operators
         context.view_layer.objects.active = obj
+        uv_method = settings.uv_method
 
-        # Smart UV Project (same params as import pipeline)
+        # Limited Dissolve merges coplanar triangles, giving each face
+        # more UV space and reducing blurriness.  ~2° is conservative
+        # enough to keep all intentional geometry detail.
+        bm = bmesh.new()
+        bm.from_mesh(mesh)
+        bmesh.ops.dissolve_limit(
+            bm, angle_limit=0.0349,
+            verts=bm.verts, edges=bm.edges,
+        )
+        bm.to_mesh(mesh)
+        bm.free()
+        mesh.update()
+
         bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.mesh.select_all(action="SELECT")
-        bpy.ops.uv.smart_project(
-            angle_limit=1.15192,
-            margin_method="SCALED",
-            rotate_method="AXIS_ALIGNED",
-            island_margin=0.002,
-            area_weight=0.6,
-            correct_aspect=True,
-            scale_to_bounds=False,
-        )
+
+        if uv_method == "LIGHTMAP":
+            bpy.ops.uv.lightmap_pack(
+                PREF_CONTEXT="ALL_FACES",
+                PREF_PACK_IN_ONE=True,
+                PREF_NEW_UVLAYER=False,
+                PREF_BOX_DIV=settings.lightmap_divisions,
+                PREF_MARGIN_DIV=0.05,
+            )
+        else:
+            bpy.ops.uv.smart_project(
+                angle_limit=1.15192,
+                margin_method="SCALED",
+                rotate_method="AXIS_ALIGNED",
+                island_margin=0.002,
+                area_weight=0.6,
+                correct_aspect=True,
+                scale_to_bounds=False,
+            )
+
         bpy.ops.object.mode_set(mode="OBJECT")
 
         # --- Texture size by triangle count ---
@@ -1014,6 +1068,12 @@ class VIEW3D_PT_mmu_paint(bpy.types.Panel):
                 row = box.row(align=True)
                 row.operator("mmu.reset_init_filaments", icon="FILE_REFRESH")
                 row.operator("mmu.initialize_painting", icon="PLAY", text="Initialize")
+
+                # UV method setting
+                uv_box = box.box()
+                uv_box.prop(settings, "uv_method")
+                if settings.uv_method == "LIGHTMAP":
+                    uv_box.prop(settings, "lightmap_divisions")
 
                 # Bake to MMU — for procedural/complex materials
                 obj = context.active_object

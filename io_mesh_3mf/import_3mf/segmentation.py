@@ -112,6 +112,7 @@ def render_triangle_to_image(
     uv1: Tuple[float, float],
     uv2: Tuple[float, float],
     color: np.ndarray,
+    expand_px: float = 0.0,
 ) -> None:
     """
     Render a solid triangle to the pixel buffer using vectorized edge function rasterization.
@@ -124,11 +125,19 @@ def render_triangle_to_image(
     at least one pixel is painted. Without this, tiny leaf sub-triangles would be
     skipped entirely, leaving scattered holes at color boundaries.
 
+    When *expand_px* > 0 the triangle is expanded outward by that many pixels.
+    The edge-function threshold for each edge is scaled by the edge's pixel
+    length so the expansion is a consistent distance regardless of triangle
+    shape.  This is used for parent-triangle fills with Lightmap Pack, where
+    each face owns its own UV rectangle and needs to cover every pixel up to
+    the island boundary without bleeding into neighbours.
+
     :param buf: Numpy array of shape (H, W, 4), modified in-place
     :param width: Image width
     :param height: Image height
     :param uv0, uv1, uv2: UV coordinates (0-1)
     :param color: Numpy array of 4 floats (RGBA, 0-1)
+    :param expand_px: Extra pixels to expand triangle outward (0 = tight).
     """
     x0, y0 = float(uv0[0]) * width, float(uv0[1]) * height
     x1, y1 = float(uv1[0]) * width, float(uv1[1]) * height
@@ -143,24 +152,26 @@ def render_triangle_to_image(
     if area < 0:
         x1, y1, x2, y2 = x2, y2, x1, y1
 
-    min_x = max(0, int(min(x0, x1, x2)))
-    max_x = min(width - 1, int(max(x0, x1, x2) + 1))
-    min_y = max(0, int(min(y0, y1, y2)))
-    max_y = min(height - 1, int(max(y0, y1, y2) + 1))
+    # Expand bounding box by expand_px so the extra border pixels are tested.
+    pad = int(expand_px + 1) if expand_px > 0 else 0
+    min_x = max(0, int(min(x0, x1, x2)) - pad)
+    max_x = min(width - 1, int(max(x0, x1, x2) + 1) + pad)
+    min_y = max(0, int(min(y0, y1, y2)) - pad)
+    max_y = min(height - 1, int(max(y0, y1, y2) + 1) + pad)
+
+    if min_x > max_x or min_y > max_y:
+        return
 
     # Sub-pixel or tiny triangle: paint centroid pixel directly.
     # This is critical for deep segmentation leaves at material boundaries
     # that are smaller than a single pixel and would otherwise be skipped.
     bbox_w = max_x - min_x + 1
     bbox_h = max_y - min_y + 1
-    if bbox_w <= 2 and bbox_h <= 2:
+    if bbox_w <= 2 and bbox_h <= 2 and expand_px == 0.0:
         cx = int((x0 + x1 + x2) / 3.0)
         cy = int((y0 + y1 + y2) / 3.0)
         if 0 <= cx < width and 0 <= cy < height:
             buf[cy, cx] = color
-        return
-
-    if min_x > max_x or min_y > max_y:
         return
 
     # Build pixel-center grid over the bounding box.
@@ -173,9 +184,23 @@ def render_triangle_to_image(
     e1 = (px - x1) * (y2 - y1) - (py - y1) * (x2 - x1)
     e2 = (px - x2) * (y0 - y2) - (py - y2) * (x0 - x2)
 
-    # Tight threshold: minimal bleed between adjacent sub-triangles.
-    # Gap closer handles any remaining single-pixel seams.
-    mask = (e0 >= -0.25) & (e1 >= -0.25) & (e2 >= -0.25)
+    if expand_px > 0.0:
+        # Per-edge normalized threshold: the edge function value at
+        # perpendicular distance d from an edge of pixel-length L is
+        # d * L.  Scaling the threshold by edge length makes the
+        # expansion a consistent number of pixels for every edge.
+        len01 = max(np.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2), 0.001)
+        len12 = max(np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2), 0.001)
+        len20 = max(np.sqrt((x0 - x2) ** 2 + (y0 - y2) ** 2), 0.001)
+        mask = (
+            (e0 >= -expand_px * len01)
+            & (e1 >= -expand_px * len12)
+            & (e2 >= -expand_px * len20)
+        )
+    else:
+        # Tight threshold: minimal bleed between adjacent sub-triangles.
+        # Gap closer handles any remaining single-pixel seams.
+        mask = (e0 >= -0.25) & (e1 >= -0.25) & (e2 >= -0.25)
 
     # Write color to all inside pixels in one shot.
     buf[min_y:max_y + 1, min_x:max_x + 1][mask] = color
@@ -238,27 +263,41 @@ def _dilate_pass(buf: np.ndarray, min_neighbors: int) -> np.ndarray:
     return buf
 
 
-def close_gaps_in_texture(buf: np.ndarray, width: int, height: int) -> np.ndarray:
+def close_gaps_in_texture(buf: np.ndarray, width: int, height: int,
+                          uv_method: str = "SMART") -> np.ndarray:
     """
-    Two-pass morphological dilation to seal edge gaps between triangles.
+    Morphological dilation to seal edge gaps between triangles.
 
-    With two-pass rendering (parent fill + painted overdraw), internal face gaps
-    are already eliminated. This dilation catches single-pixel seams at triangle
-    edges that the rasterizer misses due to floating-point precision.
+    The number of passes depends on the UV unwrap method:
 
-    Pass 1: Fill pixels with >= 2 opaque neighbors (safe, directional consensus).
-    Pass 2: Fill pixels with >= 1 opaque neighbor  (catches remaining edge pixels).
+    * **Smart UV** (default) — 2 passes.  Adjacent faces share island
+      boundaries so only single-pixel rasterization seams need filling.
+    * **Lightmap Pack** — 6 passes.  Each face is an isolated rectangle
+      with empty space between islands, so more aggressive dilation is
+      needed to pad the colour outward and prevent the background from
+      showing through at edges when rendered on the 3D model.
 
-    This expands by at most 2 pixels total — enough to seal rasterization seams
-    but not enough to bleed across UV island gaps.
+    Each pass:
+      - First fills pixels with >= 2 opaque neighbours (safe consensus).
+      - Then fills pixels with >= 1 opaque neighbour  (catches corners).
 
     :param buf: Numpy array of shape (H, W, 4)
     :param width: Image width
     :param height: Image height
+    :param uv_method: ``"SMART"`` or ``"LIGHTMAP"``
     :return: Modified buffer
     """
-    buf = _dilate_pass(buf, min_neighbors=2)
-    buf = _dilate_pass(buf, min_neighbors=1)
+    if uv_method == "LIGHTMAP":
+        # Lightmap Pack: faces are isolated — pad outward aggressively.
+        # 3 rounds × 2 passes = 6 pixels of dilation, enough to fill
+        # the margin between islands at typical resolutions.
+        for _ in range(3):
+            buf = _dilate_pass(buf, min_neighbors=2)
+            buf = _dilate_pass(buf, min_neighbors=1)
+    else:
+        # Smart UV: faces share edges — only seal hairline seams.
+        buf = _dilate_pass(buf, min_neighbors=2)
+        buf = _dilate_pass(buf, min_neighbors=1)
     return buf
 
 
@@ -268,13 +307,21 @@ def render_segmentation_to_texture(
     extruder_colors: Dict[int, List[float]],
     texture_size: int = 2048,
     default_extruder: int = 1,
+    uv_method: str = "SMART",
     bpy_module=None,
 ) -> "bpy.types.Image":
     """
     Render segmentation strings to a UV texture.
 
-    Uses Smart UV Project to create a good UV layout, then renders
-    segmentation patterns as colored triangles in UV space.
+    Two UV unwrap strategies are available (selectable via *uv_method*):
+
+    * ``"SMART"`` (default) — Smart UV Project groups adjacent coplanar
+      faces into contiguous islands.  Best for seamless pixel coverage
+      with our numpy rasterizer because adjacent faces share island
+      boundaries.
+    * ``"LIGHTMAP"`` — Lightmap Pack gives every face its own unique
+      rectangle of UV space.  Higher fidelity colour mapping but may
+      show thin gaps at triangle edges with the built-in rasterizer.
 
     Optimized path: numpy (H, W, 4) pixel buffer, bulk UV reads via
     foreach_get, vectorized rasterization and gap closing.
@@ -284,6 +331,7 @@ def render_segmentation_to_texture(
     :param extruder_colors: Dict mapping extruder index -> RGBA color list
     :param texture_size: Size of square texture
     :param default_extruder: Default extruder for state 0
+    :param uv_method: ``"SMART"`` or ``"LIGHTMAP"``
     :param bpy_module: Blender Python module (for testing injection)
     :return: Blender Image object
     """
@@ -291,27 +339,41 @@ def render_segmentation_to_texture(
 
     mesh = obj.data
 
-    if not mesh.uv_layers:
-        mesh.uv_layers.new(name="UVMap")
+    # Create dedicated MMU_Paint UV layer.  Existing UVs stay untouched.
+    mmu_layer = mesh.uv_layers.get("MMU_Paint")
+    if mmu_layer is None:
+        mmu_layer = mesh.uv_layers.new(name="MMU_Paint")
+    mesh.uv_layers.active = mmu_layer
+    mmu_layer.active_render = True
 
     _bpy.context.view_layer.objects.active = obj
     _bpy.ops.object.mode_set(mode="EDIT")
 
     _bpy.ops.mesh.select_all(action="SELECT")
-    # Smart UV is the most robust for arbitrary meshes; keeps islands compact.
-    # angle_limit is in RADIANS (1.15192 rad ≈ 66°).
-    # area_weight=0.9 allocates UV space proportional to 3D face area,
-    # giving larger (more visible) faces more texture pixels.
-    # margin_method='SCALED' scales margins with island size for efficient packing.
-    _bpy.ops.uv.smart_project(
-        angle_limit=1.15192,
-        margin_method="SCALED",
-        rotate_method="AXIS_ALIGNED",
-        island_margin=0.002,
-        area_weight=0.6,
-        correct_aspect=True,
-        scale_to_bounds=False,
-    )
+
+    if uv_method == "LIGHTMAP":
+        # Lightmap Pack — every face gets its own UV rectangle.
+        # Higher fidelity, but may show thin gaps at edges.
+        _bpy.ops.uv.lightmap_pack(
+            PREF_CONTEXT="ALL_FACES",
+            PREF_PACK_IN_ONE=True,
+            PREF_NEW_UVLAYER=False,
+            PREF_BOX_DIV=48,
+            PREF_MARGIN_DIV=0.05,
+        )
+    else:
+        # Smart UV Project — groups coplanar faces into contiguous islands.
+        # area_weight=0.6 allocates UV space proportional to 3D face area.
+        # angle_limit is in radians (1.15192 rad ≈ 66°).
+        _bpy.ops.uv.smart_project(
+            angle_limit=1.15192,
+            margin_method="SCALED",
+            rotate_method="AXIS_ALIGNED",
+            island_margin=0.002,
+            area_weight=0.6,
+            correct_aspect=True,
+            scale_to_bounds=False,
+        )
 
     _bpy.ops.object.mode_set(mode="OBJECT")
 
@@ -343,6 +405,14 @@ def render_segmentation_to_texture(
     decode_failures = 0
     subdivision_failures = 0
 
+    # When Lightmap Pack is used, each face is an isolated UV rectangle.
+    # Expand parent/whole-face fills outward by 1.5 px so every pixel in
+    # the UV island is covered.  The per-edge normalised threshold ensures
+    # the expansion is a consistent pixel distance regardless of triangle
+    # shape.  Sub-triangle overdraw keeps the tight threshold (expand=0)
+    # for crisp colour boundaries.
+    fill_expand = 1.5 if uv_method == "LIGHTMAP" else 0.0
+
     for face_idx, seg_string in seg_strings.items():
         if face_idx >= len(mesh.polygons):
             continue
@@ -360,7 +430,10 @@ def render_segmentation_to_texture(
         if tree is None:
             decode_failures += 1
             debug(f"    WARNING: Failed to decode segmentation for face {face_idx}: '{seg_string}'")
-            render_triangle_to_image(buf, texture_size, texture_size, uv0, uv1, uv2, default_color)
+            render_triangle_to_image(
+                buf, texture_size, texture_size, uv0, uv1, uv2, default_color,
+                expand_px=fill_expand,
+            )
             continue
 
         sub_triangles = subdivide_in_uv_space(uv0, uv1, uv2, tree)
@@ -368,15 +441,22 @@ def render_segmentation_to_texture(
         if not sub_triangles:
             subdivision_failures += 1
             debug(f"    WARNING: Subdivision produced no triangles for face {face_idx}")
-            render_triangle_to_image(buf, texture_size, texture_size, uv0, uv1, uv2, default_color)
+            render_triangle_to_image(
+                buf, texture_size, texture_size, uv0, uv1, uv2, default_color,
+                expand_px=fill_expand,
+            )
             continue
 
         # Two-pass rendering for clean material boundaries:
-        # Pass 1: Fill entire parent triangle with default color (guarantees
-        #         zero gaps within the face — every pixel is covered).
-        # Pass 2: Overdraw only the non-default (painted) sub-triangles on top
-        #         so paint always wins at ambiguous boundary pixels.
-        render_triangle_to_image(buf, texture_size, texture_size, uv0, uv1, uv2, default_color)
+        # Pass 1: Fill parent triangle with default color expanded outward
+        #         so every pixel in the UV island is covered (zero gaps).
+        # Pass 2: Overdraw only the non-default (painted) sub-triangles on
+        #         top with tight rasterization so paint always wins at
+        #         ambiguous boundary pixels.
+        render_triangle_to_image(
+            buf, texture_size, texture_size, uv0, uv1, uv2, default_color,
+            expand_px=fill_expand,
+        )
 
         for sub_uv0, sub_uv1, sub_uv2, state in sub_triangles:
             if state == TriangleState.DEFAULT or state == 0:
@@ -400,7 +480,10 @@ def render_segmentation_to_texture(
         uv0 = all_uvs[loop_indices[0]]
         uv1 = all_uvs[loop_indices[1]]
         uv2 = all_uvs[loop_indices[2]]
-        render_triangle_to_image(buf, texture_size, texture_size, uv0, uv1, uv2, default_color)
+        render_triangle_to_image(
+            buf, texture_size, texture_size, uv0, uv1, uv2, default_color,
+            expand_px=fill_expand,
+        )
 
     if decode_failures > 0 or subdivision_failures > 0:
         debug(
@@ -408,7 +491,7 @@ def render_segmentation_to_texture(
             f"{subdivision_failures} subdivision failures"
         )
 
-    buf = close_gaps_in_texture(buf, texture_size, texture_size)
+    buf = close_gaps_in_texture(buf, texture_size, texture_size, uv_method=uv_method)
 
     # Bulk-write pixels to Blender image.
     image.pixels.foreach_set(buf.ravel())

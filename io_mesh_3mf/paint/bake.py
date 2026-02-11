@@ -24,7 +24,7 @@ Architecture:
 - Future: ``NODE_PT_mmu_bake_gn`` — Geometry Nodes sidebar panel
 
 The bake pipeline:
-1. Ensure UV unwrap exists (Smart UV Project if needed)
+1. Ensure dedicated MMU_Paint UV layer exists (Smart UV or Lightmap Pack)
 2. Create a target image at the chosen resolution
 3. Bake the active material's diffuse output to the target image
 4. Quantize: snap every pixel to the nearest filament color (numpy vectorized)
@@ -32,6 +32,7 @@ The bake pipeline:
 """
 
 import ast
+import bmesh
 import numpy as np
 import bpy
 import bpy.props
@@ -96,28 +97,83 @@ def _quantize_pixels(
 
 
 def _ensure_uv_unwrap(obj, context):
-    """Ensure the object has a UV map; Smart UV Project if missing."""
-    mesh = obj.data
-    if mesh.uv_layers:
-        return  # Already has UVs
+    """Ensure the object has a dedicated MMU_Paint UV layer.
 
-    mesh.uv_layers.new(name="UVMap")
+    Uses the UV method selected in MMUPaintSettings (Smart UV Project by
+    default, Lightmap Pack as an option).
+
+    A Limited Dissolve pass (angle ~2°) is applied first to merge coplanar
+    triangles — this gives each remaining face more UV space and reduces
+    blurriness, especially with Lightmap Pack.
+
+    Any existing UVs (e.g. hand-crafted unwraps) are left untouched.
+    The ``MMU_Paint`` layer is set as the **active render** layer so the
+    bake writes to it; the caller is responsible for restoring the
+    original active layer afterward if desired.
+
+    Returns the name of the previously active UV layer (or ``None``)
+    so the caller can restore it.
+    """
+    mesh = obj.data
+    settings = context.scene.mmu_paint
+    uv_method = settings.uv_method
+
+    # Remember which UV layer was active before (if any)
+    prev_active_name = None
+    if mesh.uv_layers.active:
+        prev_active_name = str(mesh.uv_layers.active.name)
+
+    # Create or reuse the dedicated MMU_Paint UV layer
+    mmu_layer = mesh.uv_layers.get("MMU_Paint")
+    if mmu_layer is None:
+        mmu_layer = mesh.uv_layers.new(name="MMU_Paint")
+
+    # Set it as both the active and active-render layer
+    mesh.uv_layers.active = mmu_layer
+    mmu_layer.active_render = True
+
     context.view_layer.objects.active = obj
+
+    # Limited Dissolve merges coplanar triangles, giving each face more
+    # UV space and reducing blurriness.  ~2° is conservative enough to
+    # preserve all intentional geometry detail.
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    bmesh.ops.dissolve_limit(
+        bm, angle_limit=0.0349,
+        verts=bm.verts, edges=bm.edges,
+    )
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
 
     # Must be in edit mode for UV operators
     prev_mode = obj.mode
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
-    bpy.ops.uv.smart_project(
-        angle_limit=1.15192,
-        margin_method="SCALED",
-        rotate_method="AXIS_ALIGNED",
-        island_margin=0.002,
-        area_weight=0.6,
-        correct_aspect=True,
-        scale_to_bounds=False,
-    )
+
+    if uv_method == "LIGHTMAP":
+        bpy.ops.uv.lightmap_pack(
+            PREF_CONTEXT="ALL_FACES",
+            PREF_PACK_IN_ONE=True,
+            PREF_NEW_UVLAYER=False,
+            PREF_BOX_DIV=settings.lightmap_divisions,
+            PREF_MARGIN_DIV=0.05,
+        )
+    else:
+        bpy.ops.uv.smart_project(
+            angle_limit=1.15192,
+            margin_method="SCALED",
+            rotate_method="AXIS_ALIGNED",
+            island_margin=0.002,
+            area_weight=0.6,
+            correct_aspect=True,
+            scale_to_bounds=False,
+        )
+
     bpy.ops.object.mode_set(mode=prev_mode)
+
+    return prev_active_name
 
 
 def _get_texture_size(mesh, override_size=0):
@@ -198,6 +254,9 @@ class MMU_OT_bake_to_mmu(bpy.types.Operator):
         layout.separator()
 
         layout.prop(self, "texture_size")
+        layout.prop(settings, "uv_method")
+        if settings.uv_method == "LIGHTMAP":
+            layout.prop(settings, "lightmap_divisions")
 
         # Show the filament palette being used
         box = layout.box()
@@ -226,7 +285,7 @@ class MMU_OT_bake_to_mmu(bpy.types.Operator):
 
         # --- Step 1: Ensure UV unwrap ---
         self.report({"INFO"}, "Ensuring UV map...")
-        _ensure_uv_unwrap(obj, context)
+        prev_uv_name = _ensure_uv_unwrap(obj, context)
 
         # --- Step 2: Determine texture size ---
         tex_size = _get_texture_size(mesh, int(self.texture_size))
@@ -388,6 +447,9 @@ class MMU_OT_bake_to_mmu(bpy.types.Operator):
             cycles.samples = original_samples
             cycles.device = original_device
             context.scene.render.engine = original_engine
+            # Restore original active UV layer on failure
+            if prev_uv_name and mesh.uv_layers.get(prev_uv_name):
+                mesh.uv_layers.active = mesh.uv_layers[prev_uv_name]
             if prev_mode != "OBJECT":
                 bpy.ops.object.mode_set(mode=prev_mode)
             return {"CANCELLED"}

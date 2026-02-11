@@ -112,9 +112,12 @@ def render_paint_texture(
             else:
                 extruder_colors[idx] = [0.5, 0.5, 0.5, 1.0]
 
-        # Texture size based on triangle count
+        # Texture size — user override or auto based on triangle count
+        override_size = ctx.options.paint_texture_size
         tri_count = len(resource_object.triangles)
-        if tri_count < 5000:
+        if override_size > 0:
+            texture_size = override_size
+        elif tri_count < 5000:
             texture_size = 2048
         elif tri_count < 20000:
             texture_size = 4096
@@ -132,6 +135,7 @@ def render_paint_texture(
             extruder_colors,
             texture_size=texture_size,
             default_extruder=resource_object.default_extruder,
+            uv_method=ctx.options.paint_uv_method,
         )
 
         # Build material with segmentation texture
