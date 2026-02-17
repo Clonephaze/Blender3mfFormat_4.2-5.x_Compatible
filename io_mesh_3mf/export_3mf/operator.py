@@ -29,7 +29,7 @@ import bpy.types
 import bpy_extras.io_utils
 
 from ..common.extensions import ExtensionManager
-from ..common.logging import warn, error
+from ..common.logging import debug, warn, error
 from ..common.units import export_unit_scale
 
 from .archive import create_archive
@@ -276,6 +276,13 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
 
             global_scale = export_unit_scale(context, ctx.options.global_scale)
 
+            # Check if any mesh has multi-material face assignments
+            # (more than one material slot = face-level material data that
+            # slicers need in Orca/paint_color format, not spec basematerials)
+            has_multi_materials = any(
+                len(obj.material_slots) > 1 for obj in mesh_objects
+            ) if mesh_objects else False
+
             # Dispatch to format-specific exporter
             if ctx.options.use_orca_format == "PAINT":
                 if ctx.options.mmu_slicer_format == "ORCA":
@@ -292,6 +299,12 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
             elif ctx.project_template_path or ctx.object_settings:
                 # Orca-specific API features requested — use OrcaExporter
                 # regardless of material mode so project/object settings are written
+                exporter = OrcaExporter(ctx)
+            elif has_multi_materials:
+                # Face-level material assignments detected — use OrcaExporter
+                # so slicers (Orca, BambuStudio) receive paint_color attributes
+                # they understand, instead of spec basematerials they ignore.
+                debug("Multi-material faces detected, using Orca exporter for slicer compatibility")
                 exporter = OrcaExporter(ctx)
             else:
                 # Standard 3MF export — geometry, materials, and texture export

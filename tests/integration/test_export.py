@@ -163,6 +163,133 @@ class ExportMaterialTests(Blender3mfTestCase):
         self.assertIn('FINISHED', result)
         self.assertTrue(self.temp_file.exists())
 
+    def test_export_multi_material_uses_orca_format(self):
+        """Multi-material face assignments should export with Orca paint_color attributes.
+
+        When an object has multiple materials assigned to different faces, the
+        exporter should auto-detect this and use the Orca Production Extension
+        format (multi-file with paint_color per triangle) instead of spec
+        basematerials, which slicers like Orca Slicer and BambuStudio ignore.
+        """
+        # Create a cube with two materials assigned to different faces
+        bpy.ops.mesh.primitive_cube_add(location=(0, 0, 0))
+        cube = bpy.context.object
+
+        red_mat = self.create_red_material()
+        blue_mat = self.create_blue_material()
+
+        cube.data.materials.append(red_mat)
+        cube.data.materials.append(blue_mat)
+
+        # Assign blue material to some faces in edit mode
+        bpy.ops.object.mode_set(mode='EDIT')
+        import bmesh
+        bm = bmesh.from_edit_mesh(cube.data)
+        bm.faces.ensure_lookup_table()
+        # Assign material index 1 (blue) to the first 4 faces
+        for i, face in enumerate(bm.faces):
+            face.material_index = 1 if i < 4 else 0
+        bmesh.update_edit_mesh(cube.data)
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+        # Export in STANDARD mode (the default)
+        result = bpy.ops.export_mesh.threemf(
+            filepath=str(self.temp_file),
+            use_orca_format='STANDARD',
+        )
+
+        self.assertIn('FINISHED', result)
+        self.assertTrue(self.temp_file.exists())
+
+        # Verify the archive uses Orca Production Extension structure
+        with zipfile.ZipFile(self.temp_file, 'r') as archive:
+            files = archive.namelist()
+
+            # Should have individual object model files in 3D/Objects/
+            object_files = [f for f in files if f.startswith('3D/Objects/')]
+            self.assertGreater(
+                len(object_files), 0,
+                "Multi-material export should use Orca multi-file structure "
+                "with object files in 3D/Objects/"
+            )
+
+            # Read the individual object model and check for paint_color
+            object_model_data = archive.read(object_files[0]).decode('UTF-8')
+            root = ET.fromstring(object_model_data)
+
+            # Find all triangle elements (no namespace prefix in Orca object files)
+            triangles = root.findall('.//{http://schemas.microsoft.com/3dmanufacturing/core/2015/02}triangle')
+            if not triangles:
+                # Try without namespace (Orca format uses plain element names)
+                triangles = root.findall('.//triangle')
+
+            self.assertGreater(len(triangles), 0, "Should have triangle elements")
+
+            # At least some triangles should have paint_color attributes
+            paint_color_triangles = [
+                t for t in triangles if t.get('paint_color')
+            ]
+            self.assertGreater(
+                len(paint_color_triangles), 0,
+                "Multi-material faces should produce paint_color attributes "
+                "on triangles for slicer compatibility"
+            )
+
+            # Verify no <basematerials> in the object model (Orca doesn't use them)
+            basematerials = root.findall(
+                './/{http://schemas.microsoft.com/3dmanufacturing/core/2015/02}basematerials'
+            )
+            if not basematerials:
+                basematerials = root.findall('.//basematerials')
+            self.assertEqual(
+                len(basematerials), 0,
+                "Orca object model files should not contain basematerials elements"
+            )
+
+            # Verify Orca metadata files exist
+            has_model_settings = 'Metadata/model_settings.config' in files
+            has_project_settings = 'Metadata/project_settings.config' in files
+            self.assertTrue(
+                has_model_settings,
+                "Orca export should include model_settings.config"
+            )
+            self.assertTrue(
+                has_project_settings,
+                "Orca export should include project_settings.config"
+            )
+
+    def test_export_single_material_uses_standard_format(self):
+        """Single-material objects should use standard 3MF format, not Orca.
+
+        When an object has only one material slot, basematerials is fine and
+        the simpler standard format should be used.
+        """
+        bpy.ops.mesh.primitive_cube_add(location=(0, 0, 0))
+        cube = bpy.context.object
+
+        red_mat = self.create_red_material()
+        cube.data.materials.append(red_mat)
+
+        result = bpy.ops.export_mesh.threemf(
+            filepath=str(self.temp_file),
+            use_orca_format='STANDARD',
+        )
+
+        self.assertIn('FINISHED', result)
+
+        with zipfile.ZipFile(self.temp_file, 'r') as archive:
+            files = archive.namelist()
+
+            # Should NOT have Orca multi-file structure
+            object_files = [f for f in files if f.startswith('3D/Objects/')]
+            self.assertEqual(
+                len(object_files), 0,
+                "Single-material export should use standard format, not Orca multi-file"
+            )
+
+            # Should have the standard 3D/3dmodel.model
+            self.assertIn('3D/3dmodel.model', files)
+
     def test_export_mixed_none_materials(self):
         """Export with mix of materials and None slots."""
         bpy.ops.mesh.primitive_cube_add(location=(0, 0, 0))

@@ -828,6 +828,11 @@ def export_3mf(
 
     scale = export_unit_scale(context, global_scale)
 
+    # Check if any mesh has multi-material face assignments
+    has_multi_materials = any(
+        len(obj.material_slots) > 1 for obj in mesh_objects
+    ) if mesh_objects else False
+
     # Dispatch to exporter.
     try:
         if use_orca_format == "PAINT":
@@ -843,6 +848,11 @@ def export_3mf(
         elif ctx.project_template_path or ctx.object_settings:
             # Orca-specific API features requested — use OrcaExporter
             # regardless of material mode so project/object settings are written
+            exporter = OrcaExporter(ctx)
+        elif has_multi_materials:
+            # Face-level material assignments detected — use OrcaExporter
+            # so slicers receive paint_color attributes they understand.
+            debug(f"Multi-material faces detected, using Orca exporter for slicer compatibility")
             exporter = OrcaExporter(ctx)
         else:
             exporter = StandardExporter(ctx)
