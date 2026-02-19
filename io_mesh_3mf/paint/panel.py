@@ -155,6 +155,7 @@ from ..common.colors import hex_to_rgb as _rgb_from_hex  # noqa: E402
 from ..common.colors import rgb_to_hex as _hex_from_rgb  # noqa: E402
 from ..common.colors import srgb_to_linear as _srgb_to_linear  # noqa: E402
 from ..common.colors import linear_to_srgb as _linear_to_srgb  # noqa: E402
+from ..common.logging import debug  # noqa: E402
 
 
 def _get_paint_image(obj):
@@ -609,27 +610,107 @@ class MMU_OT_detect_material_colors(bpy.types.Operator):
     bl_description = (
         "Scan the active object's shader node trees for colors.\n"
         "Reads Color Ramp stops, Principled BSDF Base Color, RGB nodes,\n"
-        "and viewport display colors, then populates the filament list"
+        "and viewport display colors, then populates the filament list.\n"
+        "If an image texture or vertex colors are detected, prompts for\n"
+        "the number of dominant colors to extract"
     )
     bl_options = {"INTERNAL"}
+
+    num_colors: bpy.props.IntProperty(
+        name="Number of Colors",
+        description="How many dominant colors to extract from the texture",
+        default=4,
+        min=2,
+        max=16,
+    )
+
+    # Internal: which source type was detected
+    _source: str = "NODES"  # "NODES", "IMAGE", or "VERTEX"
 
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        return (
-            obj is not None
-            and obj.type == "MESH"
-            and obj.data.materials
-            and not obj.data.get("3mf_is_paint_texture")
+        if obj is None or obj.type != "MESH":
+            return False
+        if obj.data.get("3mf_is_paint_texture"):
+            return False
+        # Allow if object has materials OR vertex colors
+        has_materials = bool(obj.data.materials)
+        has_vertex = (
+            hasattr(obj.data, "color_attributes")
+            and len(obj.data.color_attributes) > 0
         )
+        return has_materials or has_vertex
+
+    def invoke(self, context, event):
+        obj = context.active_object
+
+        # Check for image texture on active material
+        image = _get_any_image_texture(obj)
+        debug(f"[Detect] _get_any_image_texture -> {image}")
+        if image is not None:
+            self._source = "IMAGE"
+            debug(f"[Detect] Source = IMAGE, image = '{image.name}' ({image.size[0]}x{image.size[1]})")
+            return context.window_manager.invoke_props_dialog(
+                self, title="Detect Colors from Image Texture",
+            )
+
+        # Check for vertex colors — either via color attributes on the
+        # mesh or a Color Attribute node feeding a Principled BSDF
+        has_vc = _has_vertex_colors(obj)
+        has_ca_node = _has_color_attribute_node(obj)
+        debug(f"[Detect] _has_vertex_colors -> {has_vc}, _has_color_attribute_node -> {has_ca_node}")
+        if has_vc or has_ca_node:
+            self._source = "VERTEX"
+            debug("[Detect] Source = VERTEX")
+            return context.window_manager.invoke_props_dialog(
+                self, title="Detect Colors from Vertex Colors",
+            )
+
+        # No texture sources — run node detection immediately
+        self._source = "NODES"
+        debug("[Detect] Source = NODES (fallback to shader node detection)")
+        return self.execute(context)
+
+    def draw(self, context):
+        layout = self.layout
+        if self._source == "IMAGE":
+            layout.label(text="Image texture detected on this object.")
+        else:
+            layout.label(text="Vertex color data detected on this object.")
+        layout.label(text="How many dominant colors to extract?")
+        layout.separator()
+        layout.prop(self, "num_colors", slider=True)
 
     def execute(self, context):
         obj = context.active_object
         settings = context.scene.mmu_paint
-        colors = _collect_material_colors(obj)
+        debug(f"[Detect] execute() _source={self._source}, num_colors={self.num_colors}")
+
+        # --- Texture-based detection ---
+        if self._source == "IMAGE":
+            image = _get_any_image_texture(obj)
+            if image is None:
+                self.report({"WARNING"}, "No image texture found")
+                return {"CANCELLED"}
+            colors = _extract_texture_colors(image, self.num_colors)
+            source_label = f"image texture '{image.name}'"
+
+        elif self._source == "VERTEX":
+            colors = _extract_vertex_colors(obj, self.num_colors)
+            source_label = "vertex colors"
+
+        else:
+            # Node-tree detection (original behavior)
+            colors = _collect_material_colors(obj)
+            source_label = "materials"
+
+        debug(f"[Detect] Got {len(colors)} colors from {self._source}:")
+        for i, c in enumerate(colors):
+            debug(f"  [{i}] sRGB ({c[0]:.3f}, {c[1]:.3f}, {c[2]:.3f})  ~  {_hex_from_rgb(c[0], c[1], c[2])}")
 
         if not colors:
-            self.report({"WARNING"}, "No colors detected in materials")
+            self.report({"WARNING"}, f"No colors detected from {source_label}")
             return {"CANCELLED"}
 
         # Clamp to 16 filaments max
@@ -644,7 +725,15 @@ class MMU_OT_detect_material_colors(bpy.types.Operator):
             item.color = rgb
 
         settings.active_init_filament_index = 0
-        self.report({"INFO"}, f"Detected {len(colors)} colors from materials")
+        self.report({"INFO"}, f"Detected {len(colors)} colors from {source_label}")
+
+        # Force panel redraw so the color swatches update immediately
+        for area in context.screen.areas:
+            if area.type == "VIEW_3D":
+                area.tag_redraw()
+            elif area.type == "PROPERTIES":
+                area.tag_redraw()
+
         return {"FINISHED"}
 
 
@@ -796,6 +885,247 @@ def _deduplicate_colors(colors, tolerance=0.02):
         if not is_dup:
             unique.append(c)
     return unique
+
+
+# -------------------------------------------------------------------
+#  Image texture / vertex color detection helpers
+# -------------------------------------------------------------------
+
+def _get_any_image_texture(obj):
+    """Find the first Image Texture node with image data on the active object.
+
+    Unlike ``_get_paint_image`` this inspects *all* materials, skipping
+    any images that are tagged as MMU paint textures (those have already
+    been set up by the paint suite).
+    """
+    if not obj or not obj.data or not obj.data.materials:
+        return None
+    mesh = obj.data
+    for mat in mesh.materials:
+        if mat and mat.use_nodes and mat.node_tree:
+            for node in mat.node_tree.nodes:
+                if node.type == "TEX_IMAGE" and node.image:
+                    # Skip images created by the paint suite itself
+                    if node.image.name.endswith("_MMU_Paint"):
+                        continue
+                    return node.image
+    return None
+
+
+def _has_vertex_colors(obj):
+    """Return True if *obj* has a non-empty color attribute."""
+    if not obj or not obj.data:
+        return False
+    if not hasattr(obj.data, "color_attributes"):
+        return False
+    ca = obj.data.color_attributes
+    # active_color can be None even when color data exists, so
+    # just check if there are any color attributes at all.
+    return len(ca) > 0
+
+
+def _has_color_attribute_node(obj):
+    """Return True if any material uses a Color Attribute / Attribute node
+    connected to a Principled BSDF Base Color input."""
+    if not obj or not obj.data or not obj.data.materials:
+        return False
+    for mat in obj.data.materials:
+        if not mat or not mat.use_nodes or not mat.node_tree:
+            continue
+        for node in mat.node_tree.nodes:
+            if node.type != "BSDF_PRINCIPLED":
+                continue
+            base_input = node.inputs.get("Base Color")
+            if base_input and base_input.is_linked:
+                src = base_input.links[0].from_node
+                if src.type in ("ATTRIBUTE", "VERTEX_COLOR"):
+                    return True
+    return False
+
+
+def _bin_srgb_pixels(srgb):
+    """Bin an (N, 3) sRGB array into 16-level histogram bins.
+
+    Returns ``(bin_colors, bin_counts)`` where *bin_colors* is an (M, 3)
+    float32 array of sRGB center values per bin and *bin_counts* is the
+    corresponding (M,) count array, both sorted by descending frequency.
+    """
+    BIN_LEVELS = 16
+    binned = (srgb * (BIN_LEVELS - 0.001)).astype(np.uint16)
+    bin_ids = (
+        binned[:, 0].astype(np.uint32) * BIN_LEVELS * BIN_LEVELS
+        + binned[:, 1].astype(np.uint32) * BIN_LEVELS
+        + binned[:, 2].astype(np.uint32)
+    )
+
+    unique_bins, counts = np.unique(bin_ids, return_counts=True)
+    order = np.argsort(-counts)
+    unique_bins = unique_bins[order]
+    counts = counts[order]
+
+    # Convert bin indices back to sRGB center values
+    colors = np.empty((len(unique_bins), 3), dtype=np.float32)
+    for i, bid in enumerate(unique_bins):
+        colors[i, 0] = (int(bid) // (BIN_LEVELS * BIN_LEVELS) + 0.5) / BIN_LEVELS
+        colors[i, 1] = ((int(bid) // BIN_LEVELS) % BIN_LEVELS + 0.5) / BIN_LEVELS
+        colors[i, 2] = (int(bid) % BIN_LEVELS + 0.5) / BIN_LEVELS
+
+    return colors, counts
+
+
+def _select_diverse_colors(bin_colors, bin_counts, num_colors):
+    """Greedily pick *num_colors* that are both frequent AND visually diverse.
+
+    1. First pick = the most frequent bin.
+    2. Each subsequent pick maximises  ``frequency_weight × min_distance``
+       where *min_distance* is the Euclidean sRGB distance to the nearest
+       already-selected color.  This prevents selecting multiple bins of
+       the same hue even when they dominate the histogram.
+
+    Returns a list of ``(r, g, b)`` sRGB tuples.
+    """
+    n = len(bin_colors)
+    if n == 0:
+        return []
+    if n <= num_colors:
+        return [tuple(bin_colors[i]) for i in range(n)]
+
+    # Normalise counts to [0, 1] then take sqrt so that frequency
+    # still matters but doesn't drown out color diversity.  Without
+    # this, multiple near-identical grey bins outscore a distinct but
+    # less frequent skin-tone bin.
+    max_count = float(bin_counts[0])  # already sorted descending
+    weights = np.sqrt(bin_counts.astype(np.float64) / max_count)
+
+    debug(f"[Detect] _select_diverse_colors: {n} bins, picking {num_colors}")
+    debug(f"[Detect]   Top 10 bins by frequency:")
+    for i in range(min(10, n)):
+        c = bin_colors[i]
+        debug(f"    bin[{i}] sRGB ({c[0]:.3f}, {c[1]:.3f}, {c[2]:.3f})  count={bin_counts[i]}  weight={weights[i]:.4f}")
+
+    selected_indices = [0]  # start with the most frequent
+    # Track min distance from each candidate to any selected color
+    min_dists = np.full(n, np.inf, dtype=np.float64)
+
+    for step in range(num_colors - 1):
+        last_sel = bin_colors[selected_indices[-1]]
+        # Update min distances with the distance to the last picked color
+        dists = np.sqrt(np.sum((bin_colors - last_sel) ** 2, axis=1))
+        min_dists = np.minimum(min_dists, dists)
+
+        # Score = frequency_weight * distance (exclude already selected)
+        scores = weights * min_dists
+        for idx in selected_indices:
+            scores[idx] = -1.0
+        best = int(np.argmax(scores))
+        c = bin_colors[best]
+        debug(f"    Step {step+1}: picked bin[{best}] sRGB ({c[0]:.3f}, {c[1]:.3f}, {c[2]:.3f})  "
+              f"count={bin_counts[best]}  min_dist={min_dists[best]:.4f}  score={scores[best]:.4f}")
+        selected_indices.append(best)
+
+    result = [tuple(bin_colors[i]) for i in selected_indices]
+    debug(f"[Detect] Final selection: {result}")
+    return result
+
+
+def _linear_to_srgb_array(rgb):
+    """Convert an (N, 3) linear-light array to sRGB, clamped to [0, 1]."""
+    srgb = np.where(
+        rgb <= 0.0031308,
+        rgb * 12.92,
+        1.055 * np.power(np.clip(rgb, 0.0031308, None), 1.0 / 2.4) - 0.055,
+    )
+    return np.clip(srgb, 0.0, 1.0)
+
+
+def _extract_texture_colors(image, num_colors):
+    """Extract the *num_colors* most dominant colors from *image*.
+
+    Uses histogram binning (16 levels per RGB channel = 4096 bins)
+    to group similar colors, then selects the N most frequent *and*
+    visually diverse colors as sRGB (r, g, b) tuples.
+
+    Fully transparent pixels (alpha < 0.01) and near-white pixels
+    (likely untextured UV background) are ignored.
+    """
+    w, h = image.size
+    debug(f"[Detect] _extract_texture_colors: image='{image.name}' size={w}x{h}")
+    if w == 0 or h == 0:
+        return []
+
+    pixel_count = w * h * 4
+    flat = np.empty(pixel_count, dtype=np.float32)
+    image.pixels.foreach_get(flat)
+    pixels = flat.reshape(-1, 4)  # (N, RGBA)
+    debug(f"[Detect]   Total pixels: {len(pixels)}")
+
+    # Discard fully transparent pixels
+    opaque_mask = pixels[:, 3] >= 0.01
+    rgb = pixels[opaque_mask, :3]  # (M, 3) linear RGB
+    debug(f"[Detect]   Opaque pixels: {len(rgb)}")
+    if rgb.size == 0:
+        return []
+
+    srgb = _linear_to_srgb_array(rgb)
+
+    # Discard near-white pixels — these are typically bare UV
+    # background, not actual texture content (sRGB > ~0.94 per ch)
+    near_white = np.all(srgb > 0.94, axis=1)
+    debug(f"[Detect]   Near-white pixels discarded: {np.sum(near_white)}")
+    srgb = srgb[~near_white]
+    debug(f"[Detect]   Remaining pixels for binning: {len(srgb)}")
+    if srgb.size == 0:
+        return []
+
+    bin_colors, bin_counts = _bin_srgb_pixels(srgb)
+    debug(f"[Detect]   Unique bins: {len(bin_colors)}")
+    return _select_diverse_colors(bin_colors, bin_counts, num_colors)
+
+
+def _extract_vertex_colors(obj, num_colors):
+    """Extract the *num_colors* most dominant vertex colors from *obj*.
+
+    Reads the active color attribute and applies the same histogram
+    binning + diversity-weighted selection as ``_extract_texture_colors``.
+    """
+    if not _has_vertex_colors(obj):
+        debug("[Detect] _extract_vertex_colors: no vertex colors on object")
+        return []
+
+    ca = obj.data.color_attributes
+    color_attr = ca.active_color if ca.active_color is not None else ca[0]
+    elem_count = len(color_attr.data)
+    debug(f"[Detect] _extract_vertex_colors: attr='{color_attr.name}', "
+          f"domain='{color_attr.domain}', data_type='{color_attr.data_type}', "
+          f"elements={elem_count}")
+    if elem_count == 0:
+        return []
+
+    flat = np.zeros(elem_count * 4, dtype=np.float32)
+    color_attr.data.foreach_get("color", flat)
+    rgb = flat.reshape(-1, 4)[:, :3]  # (N, 3) — already linear in Blender
+
+    # Sample first few values for debugging
+    debug(f"[Detect]   First 5 raw linear RGB values:")
+    for i in range(min(5, len(rgb))):
+        debug(f"    [{i}] ({rgb[i,0]:.4f}, {rgb[i,1]:.4f}, {rgb[i,2]:.4f})")
+
+    srgb = _linear_to_srgb_array(rgb)
+    debug(f"[Detect]   First 5 sRGB values:")
+    for i in range(min(5, len(srgb))):
+        debug(f"    [{i}] ({srgb[i,0]:.4f}, {srgb[i,1]:.4f}, {srgb[i,2]:.4f})")
+
+    # Discard near-white pixels (bare/untextured regions)
+    near_white = np.all(srgb > 0.94, axis=1)
+    debug(f"[Detect]   Near-white discarded: {np.sum(near_white)} / {len(srgb)}")
+    srgb = srgb[~near_white]
+    if srgb.size == 0:
+        debug("[Detect]   All pixels were near-white, nothing left")
+        return []
+
+    bin_colors, bin_counts = _bin_srgb_pixels(srgb)
+    debug(f"[Detect]   Unique bins: {len(bin_colors)}")
+    return _select_diverse_colors(bin_colors, bin_counts, num_colors)
 
 
 class MMU_OT_select_filament(bpy.types.Operator):
@@ -1280,13 +1610,16 @@ class VIEW3D_PT_mmu_paint(bpy.types.Panel):
 
                 # Bake to MMU — for procedural/complex materials
                 obj = context.active_object
-                if obj and obj.data.materials and obj.data.materials[0]:
+                has_mats = obj and obj.data.materials and obj.data.materials[0]
+                has_vcol = obj and _has_vertex_colors(obj)
+                if has_mats or has_vcol:
                     layout.separator()
                     bake_box = layout.box()
                     bake_box.label(text="From Existing Material", icon="RENDER_STILL")
-                    bake_row = bake_box.row()
-                    bake_row.scale_y = 1.2
-                    bake_row.operator("mmu.bake_to_mmu", icon="RENDER_STILL")
+                    if has_mats:
+                        bake_row = bake_box.row()
+                        bake_row.scale_y = 1.2
+                        bake_row.operator("mmu.bake_to_mmu", icon="RENDER_STILL")
                     detect_row = bake_box.row()
                     detect_row.operator(
                         "mmu.detect_material_colors", icon="MATERIAL",

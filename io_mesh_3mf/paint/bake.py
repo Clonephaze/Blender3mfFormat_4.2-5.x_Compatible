@@ -410,6 +410,30 @@ class MMU_OT_bake_to_mmu(bpy.types.Operator):
                 bake_pass_filter = set()  # EMIT bake has no pass_filter
                 debug("Bake to MMU: using EMIT bake (skipping lighting)")
 
+        # --- Step 6d: Pin Image Texture UVs to the original UV layer ---
+        # After _ensure_uv_unwrap() the active UV is MMU_Paint.  Image
+        # Texture nodes without an explicit UV input fall back to the
+        # active layer — which is now wrong.  Wire a temporary UV Map
+        # node pointing at the original UV layer so the bake samples
+        # the source texture with the correct coordinates.
+        _temp_uv_nodes = []
+        if prev_uv_name and mesh.uv_layers.get(prev_uv_name):
+            for node in list(nodes):
+                if node.type != "TEX_IMAGE" or node == bake_node:
+                    continue
+                uv_input = node.inputs.get("Vector")
+                if uv_input and not uv_input.is_linked:
+                    uv_node = nodes.new("ShaderNodeUVMap")
+                    uv_node.uv_map = prev_uv_name
+                    uv_node.name = "_MMU_Temp_UV"
+                    uv_node.location = (
+                        node.location.x - 200,
+                        node.location.y - 100,
+                    )
+                    links.new(uv_node.outputs["UV"], uv_input)
+                    _temp_uv_nodes.append(uv_node)
+                    debug(f"Bake to MMU: pinned '{node.name}' UV to '{prev_uv_name}'")
+
         # Ensure we're in Object mode for baking
         prev_mode = obj.mode
         if prev_mode != "OBJECT":
@@ -436,6 +460,8 @@ class MMU_OT_bake_to_mmu(bpy.types.Operator):
             error(f"Bake failed: {e}")
             self.report({"ERROR"}, f"Bake failed: {e}")
             # Clean up temp nodes and settings
+            for uv_node in _temp_uv_nodes:
+                nodes.remove(uv_node)
             if emit_node:
                 if original_surface_socket:
                     links.new(
@@ -455,6 +481,10 @@ class MMU_OT_bake_to_mmu(bpy.types.Operator):
             return {"CANCELLED"}
 
         # --- Step 8: Restore render engine and Cycles settings ---
+        # Tear down temporary UV Map nodes used to pin texture sampling
+        for uv_node in _temp_uv_nodes:
+            nodes.remove(uv_node)
+
         # Tear down the temporary Emission wiring
         if emit_node:
             if original_surface_socket:

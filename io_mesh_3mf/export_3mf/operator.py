@@ -310,11 +310,32 @@ class Export3MF(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
                 # regardless of material mode so project/object settings are written
                 exporter = OrcaExporter(ctx)
             elif has_multi_materials:
-                # Face-level material assignments detected — use OrcaExporter
-                # so slicers (Orca, BambuStudio) receive paint_color attributes
-                # they understand, instead of spec basematerials they ignore.
-                debug("Multi-material faces detected, using Orca exporter for slicer compatibility")
-                exporter = OrcaExporter(ctx)
+                # Check if passthrough Materials Extension data exists from a
+                # prior 3MF import.  If so, use StandardExporter to preserve
+                # round-trip fidelity (colorgroups, textures, multiproperties,
+                # etc.) instead of converting to Orca paint_color attributes.
+                scene = context.scene
+                has_passthrough = bool(
+                    scene.get("3mf_colorgroups")
+                    or scene.get("3mf_compositematerials")
+                    or scene.get("3mf_multiproperties")
+                    or scene.get("3mf_textures")
+                    or scene.get("3mf_texture_groups")
+                    or scene.get("3mf_pbr_display_props")
+                    or scene.get("3mf_pbr_texture_displays")
+                )
+                if has_passthrough:
+                    debug(
+                        "Multi-material faces with passthrough data detected, "
+                        "using Standard exporter for round-trip fidelity"
+                    )
+                    exporter = StandardExporter(ctx)
+                else:
+                    # Face-level material assignments detected — use OrcaExporter
+                    # so slicers (Orca, BambuStudio) receive paint_color attributes
+                    # they understand, instead of spec basematerials they ignore.
+                    debug("Multi-material faces detected, using Orca exporter for slicer compatibility")
+                    exporter = OrcaExporter(ctx)
             else:
                 # Standard 3MF export — geometry, materials, and texture export
                 exporter = StandardExporter(ctx)
