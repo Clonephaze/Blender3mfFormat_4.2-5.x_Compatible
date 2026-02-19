@@ -863,7 +863,7 @@ def export_3mf(
         elif has_multi_materials:
             # Face-level material assignments detected — use OrcaExporter
             # so slicers receive paint_color attributes they understand.
-            debug(f"Multi-material faces detected, using Orca exporter for slicer compatibility")
+            debug("Multi-material faces detected, using Orca exporter for slicer compatibility")
             exporter = OrcaExporter(ctx)
         else:
             exporter = StandardExporter(ctx)
